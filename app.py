@@ -410,8 +410,10 @@ class VideoDubbing:
                 try:
                     translation = match.group(1)
                     return translation
-                except:
-                    return 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+                except Exception as e:
+                    print(f"Translation extraction failed: {e}")
+                    print(f"Raw response: {chat_completion.choices[0].message.content}")
+                    return f"[Translation Error: {sentence}]"
                     
                
 
