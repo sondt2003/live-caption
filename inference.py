@@ -93,10 +93,10 @@ class VideoDubbing:
                 f.write(f"[{tm.strftime('%Y-%m-%d %H:%M:%S')}] {step}: {duration:.2f} seconds\n")
 
         overall_start = tm.time()
-        os.system("rm -r workspace/audio")
-        os.system("mkdir workspace/audio")
-        os.system("rm -r workspace/results")
-        os.system("mkdir workspace/results")
+        
+        # Clean workspace directory completely on each run
+        os.system("rm -rf workspace")
+        os.system("mkdir -p workspace/audio workspace/results")
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
         # Initialize the pre-trained speaker diarization pipeline
@@ -105,8 +105,11 @@ class VideoDubbing:
             pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization",
                                          use_auth_token=self.huggingface_auth_token).to(device)
             
-            # Use video file directly for diarization (no need to export)
-            audio_file = self.Video_path
+            # Extract audio from video to WAV format (pyannote cannot read MP4 directly)
+            print("Extracting audio for diarization...")
+            audio = AudioSegment.from_file(self.Video_path, format="mp4")
+            audio_file = "workspace/audio/diarization_input.wav"
+            audio.export(audio_file, format="wav")
             
             # Apply the diarization pipeline on the audio file
             diarization_start = tm.time()
@@ -682,7 +685,7 @@ def main():
 	if not video_path:
 		video_path = args.video_url
 	
-	vidubb = VideoDubbing(video_path, args.source_language, args.target_language, args.LipSync, not args.Bg_sound, args.whisper_model, os.getenv('Groq_TOKEN'), os.getenv('HF_TOKEN'))
+	vidubb = VideoDubbing(video_path, args.source_language, args.target_language, args.LipSync, not args.Bg_sound, args.whisper_model, os.getenv('GROQ_API_KEY'), os.getenv('HF_TOKEN'))
 	
 if __name__ == '__main__':
 	main()
