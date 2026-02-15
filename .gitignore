@@ -1,0 +1,44 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Runtime/Output directories
+workspace/
+
+# Model checkpoints and weights
+wav2vec2_checkpoints/
+Wav2Lip/wav2lip_gan.pth
+Wav2Lip/face_detection/detection/sfd/s3fd.pth
+Wav2Lip/speakers_image/
+Wav2Lip/frame_per_speaker.json
+
+# Environment files
+.env
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.bak
+output_video.mp4
+denoised_video.mp4
+video_path.mp4
