@@ -622,6 +622,7 @@ class VideoDubbing:
             command = f"ffmpeg -i '{self.Video_path}' -i audio/output.wav -c:v copy -map 0:v:0 -map 1:a:0 -shortest denoised_video.mp4"
             subprocess.run(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         if self.LipSync and self.Voice_denoising:
+            lipsync_start = tm.time()  # Start timing lip sync
             os.system("pip install librosa==0.9.1 > /dev/null 2>&1")
             os.system("cd Wav2Lip && python inference.py --checkpoint_path 'wav2lip_gan.pth' --face '../denoised_video.mp4' --audio '../audio/output.wav' --face_det_batch_size 1 --wav2lip_batch_size 1")
             
@@ -645,6 +646,7 @@ class VideoDubbing:
             shutil.move(source_path, destination_folder)
             os.remove('output_video.mp4')
             os.remove('denoised_video.mp4')
+            log_profile("Lip Sync (Wav2Lip)", tm.time() - lipsync_start)
 		
         elif not self.LipSync and self.Voice_denoising:
             source_path = 'denoised_video.mp4'
@@ -659,6 +661,14 @@ class VideoDubbing:
             shutil.move(source_path, destination_folder)
 	
         log_profile("Total Execution Time", tm.time() - overall_start)
+        
+        # Print summary
+        print("\n" + "="*60)
+        print("✅ PROCESSING COMPLETE!")
+        print("="*60)
+        print(f"📊 Detailed timing: workflow_profiling.log")
+        print(f"🎬 Output video: workspace/results/output.mp4")
+        print("="*60 + "\n")
         # os.system('pip install -r requirements.txt > /dev/null 2>&1')	
 
 def main():
