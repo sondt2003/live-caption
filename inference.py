@@ -129,6 +129,7 @@ class VideoDubbing:
 
 
         if self.LipSync:
+            face_detection_start = tm.time()  # Start timing face detection
             # Load the video file
             video = cv2.VideoCapture(self.Video_path)
             
@@ -239,6 +240,7 @@ class VideoDubbing:
                 shutil.rmtree("Wav2Lip/speakers_image")
             shutil.copytree("workspace/speakers_image", "Wav2Lip/speakers_image")
             
+            log_profile("Face Detection & Extraction", tm.time() - face_detection_start)
 
             
         ###############################################################################
@@ -588,11 +590,13 @@ class VideoDubbing:
 
         
         # Initialize Spleeter with the 2stems model (vocals + accompaniment)
+        audio_separation_start = tm.time()  # Start timing audio separation
         separator = Separator()
 
         # Load a model
         separator.load_model(model_filename='2_HP-UVR.pth')
         output_file_paths = separator.separate(self.Video_path)[0]
+        log_profile("Audio Separation (Vocals/Background)", tm.time() - audio_separation_start)
 
       
         
