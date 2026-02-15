@@ -186,6 +186,10 @@ def extract_and_save_most_common_face(folder_path, threshold=0.1):
                         grouped_faces[tuple(encoding)] = [encoding]  # Start a new group for this unique face
             
                 # Step 4: Find the most common face group
+                if not grouped_faces:
+                    print(f"Warning: No faces could be processed in {folder_path}")
+                    return None
+                    
                 most_common_group = max(grouped_faces, key=lambda x: len(grouped_faces[x]))
             
                 # The image corresponding to the most common group
