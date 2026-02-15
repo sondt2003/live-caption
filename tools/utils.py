@@ -143,9 +143,9 @@ def extract_and_save_most_common_face(folder_path, threshold=0.1):
                 face_encodings = []
                 face_images = {}
             
-                # Step 1: Extract embeddings for all images in the folder (Limit to 10 for speed)
+                # Step 1: Extract embeddings for all images in the folder (Limit to 3 for speed and memory)
                 all_images = [f for f in os.listdir(folder_path) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
-                sampled_images = all_images[:10] 
+                sampled_images = all_images[:3] 
 
                 for filename in sampled_images:
                     file_path = os.path.join(folder_path, filename)
@@ -156,7 +156,8 @@ def extract_and_save_most_common_face(folder_path, threshold=0.1):
                         face_encodings.append(embedding)
                         face_images[tuple(embedding)] = file_path  # Store the corresponding image for the encoding
                     except Exception as e:
-                        print(f"Error processing {filename}: {e}")
+                        # Simplify error message to reduce noise
+                        # print(f"Skipping {filename}: {str(e).splitlines()[0]}")
                         continue
             
                 

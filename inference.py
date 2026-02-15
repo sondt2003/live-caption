@@ -4,6 +4,7 @@ import warnings
 # Suppress TensorFlow warnings BEFORE importing TF
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Only show errors
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'  # Disable oneDNN warnings
+os.environ["TF_USE_LEGACY_KERAS"] = "1"  # Fix DeepFace Keras compatibility
 
 # Suppress Python warnings
 warnings.filterwarnings('ignore', category=UserWarning)
