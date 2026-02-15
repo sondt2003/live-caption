@@ -143,9 +143,12 @@ def extract_and_save_most_common_face(folder_path, threshold=0.1):
                 face_encodings = []
                 face_images = {}
             
-                # Step 1: Extract embeddings for all images in the folder (Limit to 3 for speed and memory)
+                # Step 1: Extract embeddings for all images in the folder (Restored to 10 for max accuracy)
+                # Force CPU execution for DeepFace to avoid OOM with larger batch
+                os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+                
                 all_images = [f for f in os.listdir(folder_path) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
-                sampled_images = all_images[:3] 
+                sampled_images = all_images[:10] 
 
                 for filename in sampled_images:
                     file_path = os.path.join(folder_path, filename)
@@ -192,6 +195,10 @@ def extract_and_save_most_common_face(folder_path, threshold=0.1):
                 shutil.copy(most_common_image, new_image_path)  # Copy the image to the new path with the desired name
             
                 print(f"Most common face extracted and saved as {new_image_path}")
+                
+                # Restore GPU visibility for other models (Wav2Lip, Whisper)
+                del os.environ["CUDA_VISIBLE_DEVICES"]
+                
                 return new_image_path
 
 def get_overlap(range1, range2):
