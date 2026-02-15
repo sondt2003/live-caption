@@ -10,6 +10,10 @@ warnings.filterwarnings('ignore', category=UserWarning)
 warnings.filterwarnings('ignore', category=FutureWarning)
 warnings.filterwarnings('ignore', category=DeprecationWarning)
 
+# Suppress SpeechBrain logging
+import logging
+logging.getLogger('speechbrain').setLevel(logging.ERROR)
+
 import time as tm
 from concurrent.futures import ThreadPoolExecutor
 
@@ -101,12 +105,8 @@ class VideoDubbing:
             pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization",
                                          use_auth_token=self.huggingface_auth_token).to(device)
             
-            # Load the audio from the video file
-            audio = AudioSegment.from_file(self.Video_path, format="mp4")
-            audio.export("workspace/audio/test0.wav", format="wav")
-            
-            
-            audio_file = "workspace/audio/test0.wav"
+            # Use video file directly for diarization (no need to export)
+            audio_file = self.Video_path
             
             # Apply the diarization pipeline on the audio file
             diarization_start = tm.time()
@@ -124,8 +124,7 @@ class VideoDubbing:
             audio = AudioSegment.from_file(self.Video_path, format="mp4")
             duration = len(audio) / 1000.0
             speakers_rolls[(0, duration)] = "SPEAKER_00"
-            audio.export("workspace/audio/test0.wav", format="wav")
-            audio_file = "workspace/audio/test0.wav"
+            audio_file = self.Video_path  # Use video directly
         
 
 
@@ -374,7 +373,7 @@ class VideoDubbing:
                 client = Groq(api_key=self.Context_translation)
                 chat_completion = client.chat.completions.create(
                     messages=[{"role": "user", "content": f"Professional translator. Translate to {target_language}: {sentence}. Format: [[sentence translation: <translation>]]"}],
-                    model="llama3-70b-8192",
+                    model="llama-3.3-70b-versatile",  # Updated from deprecated llama3-70b-8192
                 )
                 match = re.search(r'\[\[sentence translation: (.*?)\]\]', chat_completion.choices[0].message.content)
                 return match.group(1) if match else "Error in translation"
