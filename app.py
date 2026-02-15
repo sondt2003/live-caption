@@ -398,7 +398,7 @@ class VideoDubbing:
                         """,
                     }
                 ],
-                model="llama3-70b-8192",
+                model="llama-3.3-70b-versatile",  # Updated from deprecated llama3-70b-8192
             )
             # return chat_completion.choices[0].message.content
                 # Regex pattern to extract the translation
