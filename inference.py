@@ -634,7 +634,8 @@ class VideoDubbing:
         # os.system('pip install -r requirements.txt > /dev/null 2>&1')	
 
 def main():
-	os.system("rm video_path.mp4")
+	if os.path.exists("video_path.mp4"):
+		os.system("rm video_path.mp4")
 	video_path = None
 	if args.yt_url:
 		os.system(f"yt-dlp -f best -o 'video_path.mp4' --recode-video mp4 {args.yt_url}")
