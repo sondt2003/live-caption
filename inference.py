@@ -226,13 +226,13 @@ class VideoDubbing:
             
             
             # Save to a file
-            with open('frame_per_speaker.json', 'w') as f:
+            with open('workspace/frame_per_speaker.json', 'w') as f:
                 json.dump(frame_per_speaker, f)
             
             
             if os.path.exists("Wav2Lip/frame_per_speaker.json"):
                 os.remove("Wav2Lip/frame_per_speaker.json")
-            shutil.copyfile('frame_per_speaker.json', "Wav2Lip/frame_per_speaker.json")
+            shutil.copyfile('workspace/frame_per_speaker.json', "Wav2Lip/frame_per_speaker.json")
             
             
             if os.path.exists("Wav2Lip/speakers_image"):
