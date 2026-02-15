@@ -193,7 +193,7 @@ class VideoDubbing:
                 
                 # If DeepFace face grouping failed, use the first detected face
                 if max_image_path is None:
-                    print(f"Warning: DeepFace face grouping failed for {speaker}. Using first detected face.")
+                    print(f"Warning: DeepFace face grouping failed for {speaker_folder}. Using first detected face.")
                     # Find first image in the folder
                     images = [f for f in os.listdir(speaker_folder_path) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
                     if images:
@@ -202,7 +202,7 @@ class VideoDubbing:
                         shutil.copy(first_image, max_image_path)
                         print(f"Using first detected face: {first_image}")
                     else:
-                        print(f"Error: No face images found for {speaker}")
+                        print(f"Error: No face images found for {speaker_folder}")
                         continue
 
             for root, dirs, files in os.walk(speaker_images_folder):
