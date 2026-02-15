@@ -1,4 +1,15 @@
 import os
+import warnings
+
+# Suppress TensorFlow warnings BEFORE importing TF
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Only show errors
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'  # Disable oneDNN warnings
+
+# Suppress Python warnings
+warnings.filterwarnings('ignore', category=UserWarning)
+warnings.filterwarnings('ignore', category=FutureWarning)
+warnings.filterwarnings('ignore', category=DeprecationWarning)
+
 import time as tm
 from concurrent.futures import ThreadPoolExecutor
 
@@ -32,8 +43,7 @@ from tools.utils import get_overlap
 from faster_whisper import WhisperModel
 
         
-nltk.download('punkt')
-warnings.filterwarnings("ignore")
+nltk.download('punkt', quiet=True)  # Suppress download messages
 load_dotenv()
 
 parser = argparse.ArgumentParser(description='Choose between YouTube or video URL')
