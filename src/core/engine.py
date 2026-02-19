@@ -27,8 +27,7 @@ models_initialized = {
     'whisperx': False,
     'diarize': False,
     'funasr': False,
-    'dereverb': False,
-    'voxcpm': False
+    'dereverb': False
 }
 
 
@@ -82,11 +81,8 @@ def initialize_models(tts_method, asr_method, diarization):
                 models_initialized['vits'] = True
                 logger.info("Mô hình VITS sẽ được tải khi cần thiết")
 
-            # LƯU Ý: Không khởi tạo WhisperX và VoxCPM ở đây để tránh OOM (std::bad_alloc)
-            # Chúng sẽ được tải lười (lazy load) khi thực sự cần thiết trong pipeline
-            elif tts_method == 'vits' and not models_initialized.get('vits', False):
-                models_initialized['vits'] = True
-                logger.info("Mô hình VITS sẽ được tải khi cần thiết")
+            # LƯU Ý: Không khởi tạo WhisperX ở đây để tránh OOM (std::bad_alloc)
+            # Nó sẽ được tải lười (lazy load) khi thực sự cần thiết trong pipeline
             elif asr_method == 'FunASR' and not models_initialized['funasr']:
                 executor.submit(init_funasr)
                 models_initialized['funasr'] = True
@@ -268,34 +264,12 @@ def process_video(video_file, root_folder, resolution,
                 progress_callback(progress_base, stage_name)
 
             if tracker: tracker.start_stage("TTS")
-            logger.info("Chạy TTS trong tiến trình riêng biệt để tiết kiệm VRAM...")
-            # Giải phóng memory tối đa trước khi chạy TTS
-            torch.cuda.empty_cache()
-            import gc
-            gc.collect()
-            
-            cmd = [
-                sys.executable, "-c",
-                f"from modules.tts.manager import generate_all_wavs_under_folder; "
-                f"generate_all_wavs_under_folder('{folder}', '{tts_method}', "
-                f"target_language='{tts_target_language}', voice='{voice}')"
-            ]
-            
+
             try:
-                import subprocess
-                import sys
-                subprocess.run(cmd, check=True)
-                synth_path = os.path.join(folder, 'audio_combined.wav')
-                status = f"Tổng hợp xong tại {folder}"
-            except subprocess.CalledProcessError as e:
-                error_msg = f"TTS failed in subprocess: {e}"
-                logger.error(error_msg)
-                return False, None, error_msg
-                
-            if tracker: tracker.end_stage("TTS")
-            # The original code had a try-except block here, but the new subprocess call
-            # already handles CalledProcessError. We need to wrap the subprocess call
-            # in a general try-except for other potential errors.
+                status, synth_path, _ = generate_all_wavs_under_folder(
+                    folder, method=tts_method, target_language=tts_target_language, voice=voice)
+                logger.info(f'Tổng hợp giọng nói hoàn tất: {synth_path}')
+                if tracker: tracker.end_stage("TTS")
             except Exception as e:
                 stack_trace = traceback.format_exc()
                 error_msg = f'Tổng hợp giọng nói thất bại: {str(e)}\n{stack_trace}'
@@ -390,98 +364,6 @@ def engine_run(root_folder='outputs', url=None, video_file=None, num_videos=1, r
             return f"Khởi tạo mô hình thất bại: {str(e)}", None
 
         if video_file:
-            # Create folder and copy video (preparation stage)
-            base_name = os.path.splitext(os.path.basename(video_file))[0]
-            if len(base_name) > 37 and base_name[36] == '_':
-                try:
-                    import uuid
-                    uuid.UUID(base_name[:36])
-                    base_name = base_name[37:]
-                except ValueError:
-                    pass
-            import re
-            base_name = re.sub(r'[\\/*?:"<>|]', '', base_name)
-            folder = os.path.join(root_folder, base_name)
-            if not os.path.exists(folder):
-                os.makedirs(folder)
-            target_video = os.path.join(folder, 'download.mp4')
-            if not os.path.exists(target_video):
-                shutil.copy(video_file, target_video)
-            logger.info(f'Đang xử lý video: {folder}')
-
-            # Call separation here to get vocals_path
-            # This part is still in the main process to ensure folder setup is complete
-            if tracker: tracker.start_stage("Separation")
-            try:
-                status, vocals_path, _ = separate_all_audio_under_folder(
-                    folder, model_name=demucs_model, device=device, progress=True, shifts=shifts)
-                logger.info(f'Tách tiếng hoàn tất: {vocals_path}')
-                release_model()
-                torch.cuda.empty_cache()
-                if tracker: tracker.end_stage("Separation")
-
-                if progress_callback:
-                    progress_callback(25, "Đang thực hiện khử vang tiếng người (Dereverb)...")
-                if tracker: tracker.start_stage("Dereverb")
-                dereverb_path = process_folder_dereverb(folder)
-                if dereverb_path:
-                    logger.info(f'Khử vang hoàn tất: {dereverb_path}')
-                else:
-                    logger.warning('Bỏ qua khử vang (File không tồn tại hoặc lỗi)')
-                if tracker: tracker.end_stage("Dereverb")
-                release_dereverb()
-                torch.cuda.empty_cache()
-            except Exception as e:
-                stack_trace = traceback.format_exc()
-                error_msg = f'Tách tiếng thất bại: {str(e)}\n{stack_trace}'
-                logger.error(error_msg)
-                return False, None, error_msg
-
-            if tracker: tracker.start_stage("ASR")
-            # Giải phóng memory tối đa trước khi chạy ASR
-            from utils.separation import release_model
-            release_model()
-            from utils.dereverb import release_dereverb
-            release_dereverb()
-            torch.cuda.empty_cache()
-            import gc
-            gc.collect()
-
-            logger.info("Chạy ASR trong tiến trình riêng biệt để tiết kiệm VRAM...")
-            import subprocess
-            import sys
-            import json # Import json for loading transcript
-
-            # Xây dựng lệnh chạy ASR
-            # asr_method, folder, model_name, device, batch_size, diarization...
-            cmd = [
-                sys.executable, "-c",
-                f"from modules.asr.manager import transcribe_audio; "
-                f"transcribe_audio('{asr_method}', '{folder}', model_name='{whisper_model}', "
-                f"device='{device}', batch_size={batch_size}, diarization={diarization}, "
-                f"min_speakers={whisper_min_speakers if whisper_min_speakers else 'None'}, "
-                f"max_speakers={whisper_max_speakers if whisper_max_speakers else 'None'})"
-            ]
-            
-            try:
-                subprocess.run(cmd, check=True)
-                # Load lại kết quả từ file
-                with open(os.path.join(folder, 'transcript.json'), 'r', encoding='utf-8') as f:
-                    transcript_json = json.load(f)
-                status = f"Nhận diện xong tại {folder}"
-            except subprocess.CalledProcessError as e:
-                error_msg = f"ASR failed in subprocess: {e}"
-                logger.error(error_msg)
-                return False, None, error_msg
-            except Exception as e: # Catch other potential errors during ASR subprocess or file loading
-                stack_trace = traceback.format_exc()
-                error_msg = f'Nhận diện giọng nói thất bại (trong tiến trình phụ): {str(e)}\n{stack_trace}'
-                logger.error(error_msg)
-                return False, None, error_msg
-
-            if tracker: tracker.end_stage("ASR")
-            
-            # Now call process_video, but it will skip ASR and TTS as they are handled here
             success, output_video, error_msg = process_video(
                 video_file, root_folder, resolution,
                 demucs_model, device, shifts,

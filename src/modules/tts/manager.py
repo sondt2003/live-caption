@@ -117,21 +117,4 @@ def init_cosyvoice():
     engine = TTSFactory.get_tts_engine('cosyvoice')
     engine._init_model()
 
-def init_voxcpm():
-    from .factory import TTSFactory
-    engine = TTSFactory.get_tts_engine('voxcpm')
-    engine._init_model()
 
-def release_tts(method):
-    from .factory import TTSFactory
-    engine = TTSFactory.get_tts_engine(method)
-    if hasattr(engine, 'release'):
-        engine.release()
-    else:
-        # Fallback for providers without explicit release
-        engine.model = None
-        import gc
-        gc.collect()
-        import torch
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()

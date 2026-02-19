@@ -2,7 +2,6 @@ from .providers.edge import EdgeTTSProvider
 from .providers.vits import VITSProvider
 from .providers.xtts import XTTSProvider
 from .providers.cosyvoice import CosyVoiceProvider
-from .providers.voxcpm import VoxCPMProvider
 
 class TTSFactory:
     _instances = {}
@@ -20,8 +19,6 @@ class TTSFactory:
                 TTSFactory._instances[method_lower] = XTTSProvider()
             elif 'cosyvoice' in method_lower:
                 TTSFactory._instances[method_lower] = CosyVoiceProvider()
-            elif 'voxcpm' in method_lower:
-                TTSFactory._instances[method_lower] = VoxCPMProvider()
             else:
                 TTSFactory._instances[method_lower] = EdgeTTSProvider()
         

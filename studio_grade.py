@@ -25,15 +25,15 @@ status, output_video = engine_run(
     translation_method='Google Translate', 
     translation_target_language='vi', # Ngôn ngữ đích cho dịch thuật (ISO code: vi, en, zh-cn, ja, ko...)
     
-    # Phương pháp TTS: 'EdgeTTS', 'vits', 'xtts', 'cosyvoice', 'voxcpm'
+    # Phương pháp TTS: 'EdgeTTS', 'vits', 'xtts', 'cosyvoice'
     tts_target_language='vi',         # Ngôn ngữ đích cho TTS
-    tts_method='voxcpm',             
+    tts_method='EdgeTTS',             
     
     # Phương pháp ASR (Nhận diện giọng nói): 'WhisperX', 'FunASR'
     asr_method='WhisperX',            
     # Model WhisperX: 'tiny', 'base', 'small', 'medium', 'large-v1', 'large-v2', 'large-v3'
     whisper_model='small',            
-    batch_size=4,                     # Kích thước batch cho ASR (giảm để tiết kiệm VRAM)
+    batch_size=8,                     # Kích thước batch cho ASR (tăng nếu có nhiều VRAM)
     diarization=True,                 # True: Phân biệt người nói, False: Không phân biệt
     
     # Model tách nhạc/vocal: 'htdemucs', 'htdemucs_ft', 'htdemucs_6s', 'htdemucs_mmi'

@@ -1,7 +1,32 @@
-# torch>=2
-# torchaudio>=2
-faster-whisper==1.0.0
-transformers
-pandas
+# ===== TORCH STACK (cho VoxCPM + neucodec) =====
+torch==2.5.1
+torchaudio==2.5.1
+
+# ===== ASR =====
+whisperx==3.1.1
+faster-whisper==1.0.3
+transformers==4.44.2
+
+# ===== CORE FIX =====
+numpy==1.26.4
+pandas==1.5.3
+packaging==23.2
+fsspec==2025.3.0
+networkx==2.8.8
+pillow==10.4.0
+markupsafe==2.1.5
+
+# ===== AUDIO =====
+deepfilternet==0.5.6
+
+# ===== TTS =====
+TTS==0.22.0
+
+# ===== UI =====
+gradio==4.44.1
+
+# ===== OTHER =====
+datasets==3.6.0
+moviepy==2.2.1
+nltk==3.8.1
 setuptools>=65
-nltk
