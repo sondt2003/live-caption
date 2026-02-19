@@ -10,15 +10,11 @@ from audiostretchy.stretch import stretch_audio
 
 from utils.utils import save_wav, save_wav_norm
 from .factory import TTSFactory
-from .cn_tx import TextNorm
-
-normalizer = TextNorm()
 
 def preprocess_text(text, target_language='vi'):
     if 'zh-cn' in target_language.lower():
         text = text.replace('AI', '人工智能')
-        text = re.sub(r'(?<!^)([A-Z])', r' \1', text)
-        text = normalizer(text)
+        # Add basic spaces between English and Chinese if needed
         text = re.sub(r'(?<=[a-zA-Z])(?=\d)|(?<=\d)(?=[a-zA-Z])', ' ', text)
     else:
         # Generic cleanup for non-Chinese languages
@@ -119,14 +115,12 @@ def generate_all_wavs_under_folder(folder, method, target_language='vi', voice='
 
     return f'Processed {folder}', os.path.join(folder, 'audio_combined.wav'), None
 
-def init_TTS():
+def init_TTS(method='edge'):
     from .factory import TTSFactory
-    engine = TTSFactory.get_tts_engine('xtts')
-    engine._init_model()
-
-def init_cosyvoice():
-    from .factory import TTSFactory
-    engine = TTSFactory.get_tts_engine('cosyvoice')
-    engine._init_model()
+    engine = TTSFactory.get_tts_engine(method)
+    if hasattr(engine, '_init_model'):
+        engine._init_model()
+    elif hasattr(engine, '_init_env'):
+        engine._init_env()
 
 

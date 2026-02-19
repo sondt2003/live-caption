@@ -52,11 +52,21 @@ umap-learn
 
 # TTS / Voice Cloning
 # ==========================================
-# coqui-tts
-# cosyvoice
+# coqui-tts (removed)
+# cosyvoice (removed)
 WeTextProcessing
 vieneu
 soundfile
+azure-cognitiveservices-speech
+gtts
+qwen-tts
+tenacity
+pyside6
+iso639-lang
+srt
+aiohttp
+tensorboardX
+regex
 
 # ==========================================
 # Audio Processing

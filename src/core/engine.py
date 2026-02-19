@@ -13,7 +13,7 @@ from modules.asr.manager import transcribe_all_audio_under_folder
 from modules.asr.whisperx import init_whisperx, init_diarize, release_whisperx
 from modules.asr.funasr import init_funasr
 from modules.translation.manager import translate_all_transcript_under_folder
-from modules.tts.manager import generate_all_wavs_under_folder, init_TTS, init_cosyvoice
+from modules.tts.manager import generate_all_wavs_under_folder, init_TTS
 from modules.synthesize.video import synthesize_all_video_under_folder
 from utils.utils import save_wav
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -73,7 +73,7 @@ def initialize_models(tts_method, asr_method, diarization):
                 models_initialized['xtts'] = True
                 logger.info("Mô hình XTTS sẽ được tải khi sử dụng lần đầu")
             elif tts_method == 'cosyvoice' and not models_initialized['cosyvoice']:
-                executor.submit(init_cosyvoice)
+                executor.submit(init_TTS, 'cosyvoice')
                 models_initialized['cosyvoice'] = True
                 logger.info("Khởi tạo mô hình CosyVoice hoàn tất")
             elif tts_method == 'vits' and not models_initialized.get('vits', False):

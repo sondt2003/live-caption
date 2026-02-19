@@ -1,7 +1,4 @@
-from .providers.edge import EdgeTTSProvider
-from .providers.xtts import XTTSProvider
-from .providers.cosyvoice import CosyVoiceProvider
-from .providers.vieneu import VieNeuProvider
+from loguru import logger
 
 class TTSFactory:
     _instances = {}
@@ -12,15 +9,21 @@ class TTSFactory:
         
         if method_lower not in TTSFactory._instances:
             if 'edge' in method_lower:
+                from .providers.edge import EdgeTTSProvider
                 TTSFactory._instances[method_lower] = EdgeTTSProvider()
-            elif 'xtts' in method_lower:
-                TTSFactory._instances[method_lower] = XTTSProvider()
-            elif 'cosyvoice' in method_lower:
-                TTSFactory._instances[method_lower] = CosyVoiceProvider()
-            elif 'vieneu' in method_lower:
-                TTSFactory._instances[method_lower] = VieNeuProvider()
+            elif 'azure' in method_lower:
+                from .providers.azure import AzureTTSProvider
+                TTSFactory._instances[method_lower] = AzureTTSProvider()
+            elif 'openai' in method_lower:
+                from .providers.openai_tts import OpenAITTSProvider
+                TTSFactory._instances[method_lower] = OpenAITTSProvider()
+            elif 'gtts' in method_lower or 'google' in method_lower:
+                from .providers.gtts import GTTSProvider
+                TTSFactory._instances[method_lower] = GTTSProvider()
             else:
-                logger.error(f"Invalid TTS method: {method}. Valid methods: edge, vieneu, xtts, cosyvoice.")
-                raise ValueError(f"Invalid TTS method: {method}")
+                # Fallback to EdgeTTS
+                logger.warning(f"Unknown TTS method {method}, falling back to EdgeTTS")
+                from .providers.edge import EdgeTTSProvider
+                TTSFactory._instances[method_lower] = EdgeTTSProvider()
         
         return TTSFactory._instances[method_lower]
