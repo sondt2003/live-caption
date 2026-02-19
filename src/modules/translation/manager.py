@@ -85,23 +85,23 @@ def _translate(summary, transcript, target_language, method):
             except Exception as e:
                 logger.warning(f"Failed to parse batch json. Retrying individually... Error: {e}")
                 # Fallback: Translate individually
+                logger.warning(f"Batch translation failed for {len(batch)} items. Falling back to individual translation (Text Mode)...")
                 for item in batch:
                     try:
-                        s_prompt = f"Translate the following text to {target_language}. Context: {summary}. Return ONLY the translation."
+                        s_prompt = f"Translate the following text to {target_language}. Context: {summary}. Return ONLY the translation text."
                         msgs = [{"role": "system", "content": s_prompt}, {"role": "user", "content": item['text']}]
-                        res = translator.translate(msgs)
-                        # clean up valid json wrapper if present even in single mode (unlikely but possible)
-                        if res and "```" in res: res = res.split("```")[-1].strip() 
+                        # Use json_mode=False for better adherence on small models for single lines
+                        res = translator.translate(msgs, json_mode=False)
                         all_translations[item['id']] = res if res else item['text']
-                    except Exception:
+                    except Exception as e:
                          all_translations[item['id']] = item['text']
         else:
-            logger.warning("Translator returned None for batch. Retrying individually...")
+            logger.warning(f"Translator returned None for batch of {len(batch)} items. Retrying individually (Text Mode)...")
             for item in batch:
                 try:
-                    s_prompt = f"Translate the following text to {target_language}. Context: {summary}. Return ONLY the translation."
+                    s_prompt = f"Translate the following text to {target_language}. Context: {summary}. Return ONLY the translation text."
                     msgs = [{"role": "system", "content": s_prompt}, {"role": "user", "content": item['text']}]
-                    res = translator.translate(msgs)
+                    res = translator.translate(msgs, json_mode=False)
                     all_translations[item['id']] = res if res else item['text']
                 except:
                     all_translations[item['id']] = item['text']

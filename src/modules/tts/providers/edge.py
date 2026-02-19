@@ -24,7 +24,8 @@ class EdgeTTSProvider(BaseTTS):
         import concurrent.futures
         
         # Use as many workers as there are tasks for maximum speed
-        MAX_WORKERS = len(tasks) if tasks else 1
+        # Limit workers to avoid rate limiting and connection errors
+        MAX_WORKERS = min(len(tasks), os.cpu_count() or 5, 5) if tasks else 1
         
         logger.info(f"EdgeTTS: Generating {len(tasks)} segments in parallel (max_workers={MAX_WORKERS})...")
         
@@ -83,6 +84,9 @@ class EdgeTTSProvider(BaseTTS):
                 else:
                     logger.warning(f"EdgeTTS failed (retry {retry}): {result.stderr}")
                     time.sleep(2) # Backoff before retry
+            except KeyboardInterrupt:
+                logger.warning("EdgeTTS generation interrupted by user.")
+                break
             except Exception as e:
                 logger.error(f"EdgeTTS unexpected error: {e}")
                 time.sleep(2) # Backoff

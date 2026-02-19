@@ -11,17 +11,20 @@ class GroqTranslator(BaseTranslator):
             logger.error("GROQ_API_KEY not found in environment variables.")
         self.client = Groq(api_key=self.api_key)
 
-    def translate(self, messages):
+    def translate(self, messages, json_mode=True):
         """
         Messages format: [{"role": "system", "content": "..."}, {"role": "user", "content": "..."}]
         """
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                temperature=0.1,
-                response_format={"type": "json_object"}
-            )
+            kwargs = {
+                "model": self.model,
+                "messages": messages,
+                "temperature": 0.1,
+            }
+            if json_mode:
+                kwargs["response_format"] = {"type": "json_object"}
+                
+            response = self.client.chat.completions.create(**kwargs)
             return response.choices[0].message.content
         except Exception as e:
             logger.error(f"Groq Translation Error: {e}")
