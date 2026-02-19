@@ -25,9 +25,9 @@ status, output_video = engine_run(
     translation_method='Google Translate', 
     translation_target_language='vi', # Ngôn ngữ đích cho dịch thuật (ISO code: vi, en, zh-cn, ja, ko...)
     
-    # Phương pháp TTS: 'EdgeTTS', 'vits', 'xtts', 'cosyvoice'
+    # Phương pháp TTS: 'EdgeTTS', 'vieneu', 'xtts', 'cosyvoice'
     tts_target_language='vi',         # Ngôn ngữ đích cho TTS
-    tts_method='EdgeTTS',             
+    tts_method='vieneu',             
     
     # Phương pháp ASR (Nhận diện giọng nói): 'WhisperX', 'FunASR'
     asr_method='WhisperX',            
@@ -40,7 +40,10 @@ status, output_video = engine_run(
     demucs_model='htdemucs_ft',       
     
     # Độ phân giải đầu ra: '720p', '1080p', '4k', '2k'
-    target_resolution='1080p'         
+    target_resolution='1080p',
+    
+    # Âm lượng: 1.0 là mặc định, giảm xuống để bớt dính tiếng gốc (vocal leakage)
+    video_volume=0.2
 )
 
 print(f"Test Status: {status}")

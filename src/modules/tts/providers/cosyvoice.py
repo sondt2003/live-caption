@@ -24,7 +24,13 @@ class CosyVoiceProvider(BaseTTS):
             sys.path.append('CosyVoice/third_party/Matcha-TTS')
             sys.path.append('CosyVoice/')
         
-        from cosyvoice.cli.cosyvoice import CosyVoice
+        try:
+            from cosyvoice.cli.cosyvoice import CosyVoice
+        except ImportError as e:
+            logger.warning(f"Failed to import CosyVoice. CosyVoice will not be available. Error: {e}")
+            self.model = None
+            return
+
         
         if not os.path.exists(self.model_path):
             logger.info("Downloading CosyVoice model...")

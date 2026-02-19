@@ -267,7 +267,7 @@ def process_video(video_file, root_folder, resolution,
 
             try:
                 status, synth_path, _ = generate_all_wavs_under_folder(
-                    folder, method=tts_method, target_language=tts_target_language, voice=voice)
+                    folder, method=tts_method, target_language=tts_target_language, voice=voice, video_volume=video_volume)
                 logger.info(f'Tổng hợp giọng nói hoàn tất: {synth_path}')
                 if tracker: tracker.end_stage("TTS")
             except Exception as e:

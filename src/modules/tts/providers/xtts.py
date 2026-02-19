@@ -2,8 +2,13 @@ import os
 import time
 import torch
 import numpy as np
-from TTS.api import TTS
 from loguru import logger
+try:
+    from TTS.api import TTS
+except ImportError as e:
+    logger.warning(f"Failed to import TTS (Coqui TTS). XTTS will not be available. Error: {e}")
+    TTS = None
+
 from ..base import BaseTTS
 from utils.utils import save_wav
 

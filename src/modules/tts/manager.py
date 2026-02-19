@@ -36,7 +36,7 @@ def adjust_audio_length(wav_path, desired_length, sample_rate=24000, min_speed_f
     wav, sample_rate = librosa.load(target_path, sr=sample_rate)
     return wav[:int(desired_length*sample_rate)], desired_length
 
-def generate_all_wavs_under_folder(folder, method, target_language='vi', voice='vi-VN-HoaiMyNeural'):
+def generate_all_wavs_under_folder(folder, method, target_language='vi', voice='vi-VN-HoaiMyNeural', video_volume=1.0):
     transcript_path = os.path.join(folder, 'translation.json')
     output_folder = os.path.join(folder, 'wavs')
     os.makedirs(output_folder, exist_ok=True)
@@ -100,7 +100,8 @@ def generate_all_wavs_under_folder(folder, method, target_language='vi', voice='
         instr, _ = librosa.load(instr_path, sr=24000)
         # Ensure signals have the same length for addition
         min_len = min(len(full_wav), len(instr))
-        combined = full_wav[:min_len] + instr[:min_len]
+        # Apply video_volume to background instruments to reduce leakage
+        combined = full_wav[:min_len] + instr[:min_len] * video_volume
         save_wav_norm(combined, os.path.join(folder, 'audio_combined.wav'))
     else:
         shutil.copy(os.path.join(folder, 'audio_tts.wav'), os.path.join(folder, 'audio_combined.wav'))
