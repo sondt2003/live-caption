@@ -13,13 +13,15 @@ from loguru import logger
 
 def split_text(input_data,
                punctuations=['，', '；', '：', '。', '？', '！', '\n', '”']):
-    # Chinese punctuation marks for sentence ending
-
-    # Function to check if a character is a Chinese ending punctuation
+    """
+    Tách văn bản dựa trên các dấu câu kết thúc câu.
+    Dành cho việc ngắt dòng phụ đề.
+    """
+    # Hàm kiểm tra xem một ký tự có phải là dấu câu kết thúc câu tiếng Trung hay không
     def is_punctuation(char):
         return char in punctuations
 
-    # Process each item in the input data
+    # Xử lý từng mục trong dữ liệu đầu vào
     output_data = []
     for item in input_data:
         start = item["start"]
@@ -28,10 +30,10 @@ def split_text(input_data,
         original_text = item["text"]
         sentence_start = 0
 
-        # Calculate the duration for each character
+        # Tính toán thời lượng cho mỗi ký tự
         duration_per_char = (item["end"] - item["start"]) / len(text)
         for i, char in enumerate(text):
-            # If the character is a punctuation, split the sentence
+            # Nếu ký tự là dấu câu, tách câu
             if not is_punctuation(char) and i != len(text) - 1:
                 continue
             if i - sentence_start < 5 and i != len(text) - 1:
@@ -41,7 +43,7 @@ def split_text(input_data,
             sentence = text[sentence_start:i+1]
             sentence_end = start + duration_per_char * len(sentence)
 
-            # Append the new item
+            # Thêm mục mới vào danh sách đầu ra
             output_data.append({
                 "start": round(start, 3),
                 "end": round(sentence_end, 3),
@@ -50,67 +52,77 @@ def split_text(input_data,
                 "speaker": speaker
             })
 
-            # Update the start for the next sentence
+            # Cập nhật thời điểm bắt đầu cho câu tiếp theo
             start = sentence_end
             sentence_start = i + 1
 
     return output_data
     
 def format_timestamp(seconds):
-    """Converts seconds to the SRT time format."""
+    """Chuyển đổi giây sang định dạng thời gian SRT (HH:MM:SS,mmm)."""
     millisec = int((seconds - int(seconds)) * 1000)
     hours, seconds = divmod(int(seconds), 3600)
     minutes, seconds = divmod(seconds, 60)
     return f"{hours:02}:{minutes:02}:{seconds:02},{millisec:03}"
 
 def generate_srt(translation, srt_path, speed_up=1, max_line_char=30):
+    """Tạo file phụ đề SRT từ dữ liệu dịch thuật."""
     translation = split_text(translation)
     with open(srt_path, 'w', encoding='utf-8') as f:
         for i, line in enumerate(translation):
             start = format_timestamp(line['start']/speed_up)
             end = format_timestamp(line['end']/speed_up)
             text = line['translation']
-            line = len(text)//(max_line_char+1) + 1
-            avg = min(round(len(text)/line), max_line_char)
-            text = '\n'.join([text[i*avg:(i+1)*avg]
-                             for i in range(line)])
+            line_count = len(text)//(max_line_char+1) + 1
+            avg = min(round(len(text)/line_count), max_line_char)
+            text = '\n'.join([text[j*avg:(j+1)*avg]
+                             for j in range(line_count)])
             f.write(f'{i+1}\n')
             f.write(f'{start} --> {end}\n')
             f.write(f'{text}\n\n')
 
 
-def get_aspect_ratio(video_path):
+def get_video_info(video_path):
+    """Lấy thông số video: width, height, fps."""
     command = ['ffprobe', '-v', 'error', '-select_streams', 'v:0',
-               '-show_entries', 'stream=width,height', '-of', 'json', video_path]
+               '-show_entries', 'stream=width,height,r_frame_rate', '-of', 'json', video_path]
     result = subprocess.run(command, capture_output=True, text=True)
-    dimensions = json.loads(result.stdout)['streams'][0]
-    return dimensions['width'] / dimensions['height']
+    data = json.loads(result.stdout)['streams'][0]
+    
+    # Xử lý fps dạng phân số (ví dụ: "30/1")
+    fps_parts = data['r_frame_rate'].split('/')
+    fps = float(fps_parts[0]) / float(fps_parts[1]) if len(fps_parts) == 2 else float(fps_parts[0])
+    
+    return {
+        'width': data['width'],
+        'height': data['height'],
+        'fps': fps
+    }
 
 
 def convert_resolution(aspect_ratio, resolution='1080p'):
+    """Chuyển đổi độ phân giải mục tiêu dựa trên tỷ lệ khung hình."""
     if aspect_ratio < 1:
         width = int(resolution[:-1])
         height = int(width / aspect_ratio)
     else:
         height = int(resolution[:-1])
         width = int(height * aspect_ratio)
-    # make sure width and height are divisibal by 2
+    # Đảm bảo chiều rộng và chiều cao chia hết cho 2
     width = width - width % 2
     height = height - height % 2
     
-    # return f'{width}x{height}'
     return width, height
     
 def synthesize_video(folder, subtitles=True, speed_up=1.00, fps=30, resolution='1080p', background_music=None, watermark_path=None, bgm_volume=0.5, video_volume=1.0):
-    # if os.path.exists(os.path.join(folder, 'video.mp4')):
-    #     logger.info(f'Video already synthesized in {folder}')
-    #     return
+    """Tổng hợp âm thanh, video và phụ đề hoàn chỉnh trong 1 pass duy nhất."""
     
     translation_path = os.path.join(folder, 'translation.json')
     input_audio = os.path.join(folder, 'audio_combined.wav')
     input_video = os.path.join(folder, 'download.mp4')
     
     if not os.path.exists(translation_path) or not os.path.exists(input_audio):
+        logger.warning(f"Thiếu file translation.json hoặc audio_combined.wav tại {folder}")
         return
     
     with open(translation_path, 'r', encoding='utf-8') as f:
@@ -118,275 +130,141 @@ def synthesize_video(folder, subtitles=True, speed_up=1.00, fps=30, resolution='
         
     srt_path = os.path.join(folder, 'subtitles.srt')
     final_video = os.path.join(folder, 'video.mp4')
+    
+    # Tạo file phụ đề SRT (luôn tạo file rời để người dùng sử dụng)
     generate_srt(translation, srt_path, speed_up)
-    srt_path = srt_path.replace('\\', '/')
-    aspect_ratio = get_aspect_ratio(input_video)
-    width, height = convert_resolution(aspect_ratio, resolution)
-    resolution = f'{width}x{height}'
-    font_size = int(width/128)
-    outline = int(round(font_size/8))
-    video_speed_filter = f"setpts=PTS/{speed_up}"
-    audio_speed_filter = f"atempo={speed_up}"
-    font_path = "./font/SimHei.ttf"
-    subtitle_filter = f"subtitles={srt_path}:fontsdir={os.path.dirname(font_path)}:force_style='FontName=SimHei,FontSize={font_size},PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline={outline},WrapStyle=2'"
-    # subtitle_filter = f"subtitles={srt_path}:force_style='FontName=Arial,FontSize={font_size},PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline={outline},WrapStyle=2'"
+    # Đường dẫn SRT cần thay đổi để FFmpeg subtitles filter nhận diện đúng trên Windows/Linux
+    srt_path_ffmpeg = srt_path.replace('\\', '/').replace(':', '\\:')
+    
+    # Lấy thông số video gốc
+    video_info = get_video_info(input_video)
+    orig_w, orig_h = video_info['width'], video_info['height']
+    aspect_ratio = orig_w / orig_h
+    
+    # Độ phân giải đích
+    target_w, target_h = convert_resolution(aspect_ratio, resolution)
+    resolution_str = f'{target_w}x{target_h}'
+    
+    # Kiểm tra xem có thể dùng Stream Copy không?
+    # Điều kiện: Không phụ đề, không watermark, không đổi speed, không đổi độ phân giải/fps
+    can_stream_copy = (not subtitles and 
+                       not watermark_path and 
+                       speed_up == 1.0 and 
+                       orig_w == target_w and 
+                       orig_h == target_h and 
+                       abs(video_info['fps'] - fps) < 0.1)
 
-    filter_complex = f"[0:v]{video_speed_filter}[v];[1:a]{audio_speed_filter}[a]"
-        
-    # Add watermark if specified
-    if watermark_path:
-        watermark_filter = f";[2:v]scale=iw*0.15:ih*0.15[wm];[v][wm]overlay=W-w-10:H-h-10[v]"
+    if can_stream_copy:
+        logger.info("Phát hiện các thông số khớp nhau. Sử dụng Stream Copy để tổng hợp siêu tốc...")
         ffmpeg_command = [
             'ffmpeg',
             '-i', input_video,
             '-i', input_audio,
-            '-i', watermark_path,
-            '-filter_complex', filter_complex + watermark_filter,
-            '-map', '[v]',
-            '-map', '[a]',
-            '-r', str(fps),
-            '-s', resolution,
-            '-c:v', 'libx264',
+            '-c:v', 'copy',
             '-c:a', 'aac',
+            '-map', '0:v:0',
+            '-map', '1:a:0',
+            '-shortest',
             final_video,
-            '-y',
-            '-threads', '2',
+            '-y'
         ]
     else:
+        logger.info("Bắt đầu tổng hợp video với Encoding đơn luồng (Single-pass)...")
+        # Video filters
+        v_filters = []
+        if speed_up != 1.0:
+            v_filters.append(f"setpts=PTS/{speed_up}")
+            
+        # Hardcode phụ đề nếu bật
+        if subtitles:
+            font_size = int(target_w/128)
+            outline = int(round(font_size/8))
+            style = f"FontName=SimHei,FontSize={font_size},PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline={outline},WrapStyle=2"
+            v_filters.append(f"subtitles='{srt_path_ffmpeg}':force_style='{style}'")
+
+        # Watermark
+        input_args = ['-i', input_video, '-i', input_audio]
+        filter_complex = ""
+        
+        if watermark_path and os.path.exists(watermark_path):
+            input_args.extend(['-i', watermark_path])
+            base_v = "[0:v]"
+            if v_filters:
+                filter_complex += f"[0:v]{','.join(v_filters)}[v_processed];"
+                base_v = "[v_processed]"
+            
+            filter_complex += f"[2:v]scale=iw*0.15:ih*0.15[wm];{base_v}[wm]overlay=W-w-10:H-h-10[v_out]"
+            v_map = "[v_out]"
+        else:
+            if v_filters:
+                filter_complex += f"[0:v]{','.join(v_filters)}[v_out]"
+                v_map = "[v_out]"
+            else:
+                v_map = "0:v"
+
+        # Audio filter
+        a_filter = f"[1:a]atempo={speed_up}[a_out]"
+        if filter_complex:
+            filter_complex += f";{a_filter}"
+        else:
+            filter_complex = a_filter
+        
         ffmpeg_command = [
             'ffmpeg',
-            '-i', input_video,
-            '-i', input_audio,
+            *input_args,
             '-filter_complex', filter_complex,
-            '-map', '[v]',
-            '-map', '[a]',
+            '-map', v_map,
+            '-map', '[a_out]',
             '-r', str(fps),
-            '-s', resolution,
+            '-s', resolution_str,
             '-c:v', 'libx264',
             '-c:a', 'aac',
+            '-preset', 'veryfast', # Tăng tốc độ encode
             final_video,
             '-y',
-            '-threads', '2',
+            '-threads', '0', # Sử dụng toàn bộ core CPU
         ]
+
     subprocess.run(ffmpeg_command)
     time.sleep(1)
 
-    # Apply background music if specified
-    if background_music:
+    # Thêm nhạc nền (Single-pass master mixing)
+    if background_music and os.path.exists(background_music):
+        logger.info(f"Đang trộn nhạc nền từ: {background_music}")
         final_video_with_bgm = final_video.replace('.mp4', '_bgm.mp4')
         ffmpeg_command_bgm = [
             'ffmpeg',
-            '-i', final_video,                # Original video with audio
-            '-i', background_music,           # Background music
+            '-i', final_video,
+            '-i', background_music,
             '-filter_complex', f'[0:a]volume={video_volume}[v0];[1:a]volume={bgm_volume}[v1];[v0][v1]amix=inputs=2:duration=first[a]',
-            '-map', '0:v',                    # Use video from the original input
-            '-map', '[a]',                    # Use the mixed audio
-            '-c:v', 'copy',                       # Copy the original video codec
-            '-c:a', 'aac',                    # Encode the audio as AAC
+            '-map', '0:v',
+            '-map', '[a]',
+            '-c:v', 'copy', # Copy video stream, tránh re-encode lần 2
+            '-c:a', 'aac',
             final_video_with_bgm,
-            '-y',
-            '-threads', '2'
+            '-y'
         ]
         subprocess.run(ffmpeg_command_bgm)
         os.remove(final_video)
         os.rename(final_video_with_bgm, final_video)
         time.sleep(1)
-    # 字幕无所谓，所以直接try catch就好
-    try:
-        if subtitles:
-            final_video_with_subtitles = final_video.replace('.mp4', '_subtitles.mp4')
-            add_subtitles(final_video, srt_path, final_video_with_subtitles, subtitle_filter, 'ffmpeg')
-            # os.remove(final_video)
-            if os.path.exists(final_video):
-                os.remove(final_video)
-            os.rename(final_video_with_subtitles, final_video)
-            time.sleep(1)
-    except Exception as e:
-        logger.info(f"An error occurred: {e}")
-        traceback.format_exc()
 
     return final_video
 
 
-def add_subtitles(video_path, srt_path, output_path, subtitle_filter=None, method='ffmpeg'):
-    """
-    给视频文件添加字幕。
-
-    参数：
-        video_path (str): 输入视频文件的路径。
-        srt_path (str): .srt 字幕文件的路径。
-        output_path (str): 输出视频文件的路径。
-        subtitle_filter (str): 自定义字幕过滤器，默认为None，使用标准filter。
-        method (str): 使用的方法 ('moviepy' 或 'ffmpeg')，默认为 'ffmpeg'。
-
-    返回：
-        bool: 成功返回 True，失败返回 False。
-    """
-    try:
-        # 确保temp目录存在
-        temp_dir = "temp"
-        if not os.path.exists(temp_dir):
-            os.makedirs(temp_dir)
-
-        # 生成随机字符串作为临时文件名
-        random_string = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
-        temp_video_path = os.path.join(temp_dir, f"temp_video_{random_string}.mp4")
-
-        random_string = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
-        temp_srt_path = os.path.join(temp_dir, f"temp_srt_{random_string}.srt")
-
-        random_string = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
-        temp_output_path = os.path.join(temp_dir, f"temp_output_{random_string}.mp4")
-
-        # 检查源文件是否存在
-        if not os.path.exists(video_path):
-            logger.error(f"输入视频文件不存在: {video_path}")
-            return False
-
-        if not os.path.exists(srt_path):
-            logger.error(f"字幕文件不存在: {srt_path}")
-            return False
-
-        # 确保输出目录存在
-        output_dir = os.path.dirname(output_path)
-        if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
-
-        # 开始复制原始文件到临时文件
-        shutil.copyfile(video_path, temp_video_path)
-        shutil.copyfile(srt_path, temp_srt_path)
-
-        # 使用绝对路径避免路径问题
-        temp_video_path = os.path.abspath(temp_video_path)
-        temp_srt_path = os.path.abspath(temp_srt_path)
-        temp_output_path = os.path.abspath(temp_output_path)
-        # 开始检查确认字幕文件是否存在
-        if not os.path.exists(temp_srt_path):
-            logger.error(f"字幕文件不存在: {temp_srt_path}")
-            return False
-        # 开始检查确认视频文件是否存在
-        if not os.path.exists(temp_video_path):
-            logger.error(f"输入视频文件不存在: {temp_video_path}")
-            return False
-
-        if method == 'moviepy':
-            from moviepy import VideoFileClip, TextClip, CompositeVideoClip
-            from moviepy.video.tools.subtitles import SubtitlesClip
-
-            # 使用 moviepy 添加字幕
-            video = VideoFileClip(temp_video_path)
-            generator = lambda txt: TextClip(txt, font='font/SimHei.ttf', fontsize=24, color='white')
-            subtitles = SubtitlesClip(temp_srt_path, generator)
-            final_video = video.copy()
-
-            final_video = final_video.set_subtitles(subtitles)
-            # 保存视频
-            final_video.write_videofile(temp_output_path, fps=video.fps)
-
-            # 复制回原始位置
-            if os.path.exists(temp_output_path):
-                shutil.copyfile(temp_output_path, output_path)
-                logger.info(f"字幕添加成功，输出到: {output_path}")
-                return True
-            else:
-                logger.error(f"输出文件未生成: {temp_output_path}")
-                return False
-
-        elif method == 'ffmpeg':
-            # 使用 ffmpeg 添加字幕
-            try:
-                # 获取字体文件的绝对路径
-                font_dir = os.path.abspath("./font")
-
-                # 构建字幕过滤器，使用文件名引用
-                style = "FontName=SimHei,FontSize=15,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline=2,WrapStyle=2"
-                filter_option = f"subtitles={temp_srt_path}:force_style='{style}'"
-
-                # 构建命令
-                command = [
-                    'ffmpeg',
-                    '-i', f"{temp_video_path}",
-                    '-vf', f"{filter_option}",
-                    '-c:a', 'copy',
-                    f"{temp_output_path}",
-                    '-y',
-                    '-threads', '2',
-                ]
-
-                logger.info(f"执行FFmpeg命令: {' '.join(command)}")
-
-                # 执行命令
-                result = subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                stderr_output = result.stderr.decode('utf-8', errors='ignore')
-                logger.debug(f"FFmpeg输出: {stderr_output}")
-
-                # 检查是否成功生成输出文件
-                if os.path.exists(temp_output_path):
-                    # 确保输出目录存在
-                    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-                    shutil.copyfile(temp_output_path, output_path)
-                    logger.info(f"字幕添加成功，输出到: {output_path}")
-                    return True
-                else:
-                    logger.error(f"FFmpeg执行成功但输出文件未生成: {temp_output_path}")
-                    return False
-
-            except subprocess.CalledProcessError as e:
-                logger.error(f"FFmpeg命令执行失败: {e}")
-                stderr_output = e.stderr.decode('utf-8', errors='ignore') if e.stderr else "No stderr output"
-                logger.error(f"FFmpeg错误输出: {stderr_output}")
-                return False
-
-            except Exception as e:
-                logger.error(f"添加字幕时发生错误: {str(e)}")
-                import traceback
-                logger.error(f"错误堆栈: {traceback.format_exc()}")
-                return False
-        else:
-            logger.error(f"不支持的方法: {method}. 请使用 'moviepy' 或 'ffmpeg'")
-            return False
-
-    except Exception as e:
-        logger.error(f"添加字幕时发生错误: {str(e)}")
-        import traceback
-        logger.debug(f"错误详情: {traceback.format_exc()}")
-        return False
-    finally:
-        # 清理临时文件
-        temp_files = [temp_video_path, temp_srt_path, temp_output_path]
-        if method == 'ffmpeg':
-            temp_files.append(os.path.join(temp_dir, "subtitles.srt"))
-
-        for temp_file in temp_files:
-            if temp_file and os.path.exists(temp_file):
-                try:
-                    os.remove(temp_file)
-                except Exception as e:
-                    logger.debug(f"无法删除临时文件 {temp_file}: {e}")
-
 def synthesize_all_video_under_folder(folder, subtitles=True, speed_up=1.00, fps=30, background_music=None, bgm_volume=0.5, video_volume=1.0, resolution='1080p', watermark_path="f_logo.png"):
+    """Duyệt qua các thư mục con và tổng hợp tất cả video tìm thấy."""
     watermark_path = None if not os.path.exists(watermark_path) else watermark_path
-    output_video = None
+    output_video_path = None
     for root, dirs, files in os.walk(folder):
         if 'download.mp4' in files:
-            output_video = synthesize_video(root, subtitles=subtitles,
+            output_video_path = synthesize_video(root, subtitles=subtitles,
                             speed_up=speed_up, fps=fps, resolution=resolution,
                             background_music=background_music,
                             watermark_path=watermark_path, bgm_volume=bgm_volume, video_volume=video_volume)
-        # if 'download.mp4' in files and 'video.mp4' not in files:
-        #     output_video = synthesize_video(root, subtitles=subtitles,
-        #                      speed_up=speed_up, fps=fps, resolution=resolution,
-        #                      background_music=background_music,
-        #                      watermark_path=watermark_path, bgm_volume=bgm_volume, video_volume=video_volume)
-        # elif 'video.mp4' in files:
-        #     output_video = os.path.join(root, 'video.mp4')
-        #     logger.info(f'Video already synthesized in {folder}')
-    return f'Synthesized all videos under {folder}', output_video
+            
+    return f'Đã tổng hợp toàn bộ video trong {folder}', output_video_path
+
 
 if __name__ == '__main__':
-    folder = r"videos/村长台钓加拿大/20240805 英文无字幕 阿里这小子在水城威尼斯发来问候"
-    synthesize_all_video_under_folder(folder, 
-                                      subtitles=True, 
-                                      background_music = 'examples/bk_music.mp3', 
-                                      watermark_path='docs/linly_watermark.png'
-                                      )
+    print("Mô-đun tổng hợp video tối ưu đã sẵn sàng.")

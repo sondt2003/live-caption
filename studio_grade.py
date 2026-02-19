@@ -14,6 +14,7 @@ def main():
     parser.add_argument("--tts_method", type=str, default="edge", help="TTS method (edge, gtts, azure, openai). e.g. EdgeTTS, gTTS")
     parser.add_argument("--voice", type=str, default=None, help="Voice name (e.g. 'Ngoc', 'Binh'). Leave empty for default.")
     parser.add_argument("--asr_method", type=str, default="WhisperX", choices=['WhisperX', 'FunASR'], help="ASR method")
+    parser.add_argument("--hardcode_subtitles", action="store_true", help="Hardcode subtitles into video (slower)")
     parser.add_argument("--video_volume", type=float, default=0.2, help="Background music volume")
     args = parser.parse_args()
 
@@ -39,6 +40,7 @@ def main():
         tts_target_language='vi',         # Ngôn ngữ đích cho TTS
         tts_method=args.tts_method,
         voice=args.voice,
+        subtitles=args.hardcode_subtitles,
         
         # Phương pháp ASR (Nhận diện giọng nói): 'WhisperX', 'FunASR'
         asr_method=args.asr_method,            

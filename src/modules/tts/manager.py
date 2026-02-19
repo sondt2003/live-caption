@@ -49,6 +49,7 @@ def generate_all_wavs_under_folder(folder, method, target_language='vi', voice='
     # Normalize language code
     target_language = target_language.lower().replace('tiếng việt', 'vi').replace('简体中文', 'zh-cn')
     
+    # Khởi tạo engine TTS từ Factory
     engine = TTSFactory.get_tts_engine(method)
     
     full_wav = np.zeros((0, ))
@@ -57,27 +58,28 @@ def generate_all_wavs_under_folder(folder, method, target_language='vi', voice='
         text = preprocess_text(line['translation'], target_language)
         output_path = os.path.join(output_folder, f'{str(i).zfill(4)}.wav')
         
-        # Speaker reference logic
+        # Logic tìm kiếm giọng tham chiếu (Reference Audio)
         vocal_dereverb_wav = os.path.join(folder, 'audio_vocals_dereverb.wav')
         speaker_wav = vocal_dereverb_wav if os.path.exists(vocal_dereverb_wav) else os.path.join(folder, 'SPEAKER', f'{speaker}.wav')
         if not os.path.exists(speaker_wav): speaker_wav = os.path.join(folder, 'audio_vocals.wav')
 
-        # Generate TTS
+        # Gọi Engine để tạo âm thanh
         engine.generate(text, output_path, speaker_wav=speaker_wav, prompt_text=line['text'], target_language=target_language, voice=voice)
 
-        # Timeline alignment
+        # Căn chỉnh thời gian (Timeline Alignment)
         start, end = line['start'], line['end']
-        length = end - start
         length = end - start
         last_end = len(full_wav)/24000
         
         if start > last_end:
+            # Thêm khoảng lặng nếu câu tiếp theo bắt đầu muộn hơn câu trước
             full_wav = np.concatenate((full_wav, np.zeros((int((start - last_end) * 24000), ))))
         
         current_start = len(full_wav)/24000
         line['start'] = current_start
         
         if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            # Điều chỉnh độ dài âm thanh để khớp với Timeline
             wav, adjusted_len = adjust_audio_length(output_path, length)
         else:
             wav = np.zeros((int(length * 24000), ))
@@ -86,36 +88,35 @@ def generate_all_wavs_under_folder(folder, method, target_language='vi', voice='
         full_wav = np.concatenate((full_wav, wav))
         line['end'] = current_start + adjusted_len
 
-    # Audio Mastering & Combining
-    logger.info("Applying Studio-Grade Mastering...")
+    # Xử lý âm thanh hậu kỳ (Mastering)
+    logger.info("Đang xử lý âm thanh hậu kỳ (Studio-Grade Mastering)...")
     try:
         meter = pyln.Meter(24000)
         loudness = meter.integrated_loudness(full_wav)
-        # Avoid silencing everything if loudness is -inf (silence)
         if np.isinf(loudness):
-            logger.warning("Integrated loudness is -inf, skipping normalization.")
+            logger.warning("Độ lớn âm thanh không xác định (-inf), bỏ qua chuẩn hóa.")
         else:
             full_wav = pyln.normalize.loudness(full_wav, loudness, -23.0)
     except Exception as e:
-        logger.warning(f"Mastering failed: {e}")
+        logger.warning(f"Mastering thất bại: {e}")
 
     save_wav(full_wav, os.path.join(folder, 'audio_tts.wav'))
     
-    # Combine with instruments if available
+    # Trộn với nhạc nền/âm thanh gốc nếu có
     instr_path = os.path.join(folder, 'audio_instruments.wav')
     if os.path.exists(instr_path):
         instr, _ = librosa.load(instr_path, sr=24000)
-        # Ensure signals have the same length for addition
         min_len = min(len(full_wav), len(instr))
-        # Apply video_volume to background instruments to reduce leakage
+        # Áp dụng video_volume để giảm tiếng gốc nếu cần
         combined = full_wav[:min_len] + instr[:min_len] * video_volume
         save_wav_norm(combined, os.path.join(folder, 'audio_combined.wav'))
     else:
         shutil.copy(os.path.join(folder, 'audio_tts.wav'), os.path.join(folder, 'audio_combined.wav'))
 
-    return f'Processed {folder}', os.path.join(folder, 'audio_combined.wav'), None
+    return f'Xử lý xong thư mục {folder}', os.path.join(folder, 'audio_combined.wav'), None
 
 def init_TTS(method='edge'):
+    """Khởi tạo môi trường cho Engine TTS."""
     from .factory import TTSFactory
     engine = TTSFactory.get_tts_engine(method)
     if hasattr(engine, '_init_model'):

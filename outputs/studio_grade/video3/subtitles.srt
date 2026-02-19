@@ -1,10 +1,10 @@
 1
-00:00:00,000 --> 00:00:02,157
+00:00:00,000 --> 00:00:02,104
 Xin chào các bạn, 
 các bạn khỏe không
 
 2
-00:00:02,157 --> 00:00:10,500
+00:00:02,104 --> 00:00:10,240
  Bây giờ tôi đang ở sao Kim v
 ới bạn đời của mình. Chúng tô
 i đang ở Venus nhìn quanh nhữ
@@ -12,7 +12,7 @@ ng con phố tuyệt vời. Tôi yêu
  nó. Nó hoàn hảo. Nhìn kìa.
 
 3
-00:00:10,500 --> 00:00:14,500
+00:00:10,880 --> 00:00:14,240
 Thật tuyệt. Tôi nóng lòng 
 muốn cho các bạn xem pizza
 

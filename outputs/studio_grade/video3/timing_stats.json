@@ -1,37 +1,37 @@
 {
-    "total_duration": 94.856,
+    "total_duration": 44.468,
     "stages": [
         {
             "name": "Model Initialization",
-            "duration": 2.008
+            "duration": 1.83
         },
         {
             "name": "Preparation",
-            "duration": 0.004
+            "duration": 0.006
         },
         {
             "name": "Separation",
-            "duration": 26.805
+            "duration": 26.572
         },
         {
             "name": "Dereverb",
-            "duration": 0.249
+            "duration": 0.25
         },
         {
             "name": "ASR",
-            "duration": 9.009
+            "duration": 8.505
         },
         {
             "name": "Translation",
-            "duration": 1.248
+            "duration": 1.243
         },
         {
             "name": "TTS",
-            "duration": 4.029
+            "duration": 4.334
         },
         {
             "name": "Synthesis",
-            "duration": 51.147
+            "duration": 1.405
         }
     ]
 }

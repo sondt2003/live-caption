@@ -22,8 +22,6 @@ from utils.perf import PerformanceTracker
 # Theo dõi trạng thái khởi tạo mô hình
 models_initialized = {
     'demucs': False,
-    'xtts': False,
-    'cosyvoice': False,
     'whisperx': False,
     'diarize': False,
     'funasr': False,
@@ -65,25 +63,9 @@ def initialize_models(tts_method, asr_method, diarization):
                 models_initialized['dereverb'] = True
                 logger.info("Đang khởi tạo mô hình khử vang DeepFilterNet...")
 
-            # Khởi tạo mô hình TTS
-            # Mô hình XTTS sẽ được tải lười (lazy load) khi gọi tts() với target_language
-            # Điều này cho phép tải đúng mô hình XTTS tiếng Việt
-            if tts_method == 'xtts' and not models_initialized['xtts']:
-                # Bỏ qua tiền khởi tạo cho XTTS để cho phép tải mô hình theo ngôn ngữ cụ thể
-                models_initialized['xtts'] = True
-                logger.info("Mô hình XTTS sẽ được tải khi sử dụng lần đầu")
-            elif tts_method == 'cosyvoice' and not models_initialized['cosyvoice']:
-                executor.submit(init_TTS, 'cosyvoice')
-                models_initialized['cosyvoice'] = True
-                logger.info("Khởi tạo mô hình CosyVoice hoàn tất")
-            elif tts_method == 'vits' and not models_initialized.get('vits', False):
-                # Tải lười vits để an toàn
-                models_initialized['vits'] = True
-                logger.info("Mô hình VITS sẽ được tải khi cần thiết")
-
             # LƯU Ý: Không khởi tạo WhisperX ở đây để tránh OOM (std::bad_alloc)
             # Nó sẽ được tải lười (lazy load) khi thực sự cần thiết trong pipeline
-            elif asr_method == 'FunASR' and not models_initialized['funasr']:
+            if asr_method == 'FunASR' and not models_initialized['funasr']:
                 executor.submit(init_funasr)
                 models_initialized['funasr'] = True
                 logger.info("Khởi tạo mô hình FunASR hoàn tất")
@@ -324,7 +306,7 @@ def engine_run(root_folder='outputs', url=None, video_file=None, num_videos=1, r
                   whisper_min_speakers=None, whisper_max_speakers=None,
                   translation_method='LLM', translation_target_language='简体中文',
                   tts_method='xtts', tts_target_language='简体中文', voice=None,
-                  subtitles=True, speed_up=1.00, fps=30,
+                  subtitles=False, speed_up=1.00, fps=30,
                   background_music=None, bgm_volume=0.5, video_volume=1.0, target_resolution='1080p',
                   max_workers=3, max_retries=5, progress_callback=None):
     """
