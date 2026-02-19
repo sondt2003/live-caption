@@ -20,6 +20,7 @@ class TTSFactory:
             elif 'vieneu' in method_lower:
                 TTSFactory._instances[method_lower] = VieNeuProvider()
             else:
-                TTSFactory._instances[method_lower] = EdgeTTSProvider()
+                logger.error(f"Invalid TTS method: {method}. Valid methods: edge, vieneu, xtts, cosyvoice.")
+                raise ValueError(f"Invalid TTS method: {method}")
         
         return TTSFactory._instances[method_lower]

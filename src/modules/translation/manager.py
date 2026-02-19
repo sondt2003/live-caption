@@ -84,11 +84,16 @@ def split_sentences(translation, use_char_based_end=True):
         sentences = split_text_into_sentences(translation_text)
         duration_per_char = (item['end'] - item['start']) / max(1, len(translation_text)) if use_char_based_end else 0
 
-        for sentence in sentences:
+        for j, sentence in enumerate(sentences):
+            # Only provide the full original text as a 'prompt' for the context of the first segment of a split
+            # OR better: provide nothing if we don't have a 1:1 mapping to avoid hallucination.
+            # For now, we provide the text but only for the first segment to reduce clutter.
+            segment_text = text if j == 0 else "" 
+            
             sentence_end = start + duration_per_char * len(sentence) if use_char_based_end else item['end']
             output_data.append({
                 "start": round(start, 3), "end": round(sentence_end, 3),
-                "text": text, "speaker": speaker, "translation": sentence
+                "text": segment_text, "speaker": speaker, "translation": sentence
             })
             if use_char_based_end: start = sentence_end
     return output_data

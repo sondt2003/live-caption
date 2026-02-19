@@ -5,7 +5,7 @@ import numpy as np
 from loguru import logger
 try:
     from TTS.api import TTS
-except ImportError as e:
+except Exception as e:
     logger.warning(f"Failed to import TTS (Coqui TTS). XTTS will not be available. Error: {e}")
     TTS = None
 
@@ -29,6 +29,9 @@ class XTTSProvider(BaseTTS):
         if self.model is not None:
             return
         
+        if TTS is None:
+            raise ImportError("Thư viện 'coqui-tts' chưa được cài đặt hoặc bị lỗi. Không thể sử dụng XTTS.")
+
         logger.info(f"Loading XTTS model: {self.model_path}...")
         try:
             if os.path.exists(self.model_path):
@@ -37,7 +40,11 @@ class XTTSProvider(BaseTTS):
                 self.model = TTS(self.model_path).to(self.device)
         except Exception as e:
             logger.warning(f"Fallback loading XTTS: {e}")
-            self.model = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(self.device)
+            try:
+                self.model = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(self.device)
+            except Exception as e2:
+                logger.error(f"Failed to load XTTS model: {e2}")
+                raise e2
 
     def generate(self, text: str, output_path: str, **kwargs) -> None:
         if os.path.exists(output_path):

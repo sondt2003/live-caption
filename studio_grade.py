@@ -7,44 +7,58 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 
 from core.engine import engine_run
 
-# Test video path
-video_path = "/home/dangson/workspace/live-caption/video/video3.mp4"
-output_dir = "outputs/studio_grade"
+import argparse
 
-if os.path.exists(output_dir):
-    shutil.rmtree(output_dir)
-os.makedirs(output_dir, exist_ok=True)
+def main():
+    parser = argparse.ArgumentParser(description="Studio-Grade Pipeline Test")
+    parser.add_argument("--tts_method", type=str, default="vieneu", help="TTS method (edge, vieneu, xtts, cosyvoice). e.g. EdgeTTS, VieNeu")
+    parser.add_argument("--voice", type=str, default=None, help="Voice name (e.g. 'Ngoc', 'Binh'). Leave empty for Voice Cloning.")
+    parser.add_argument("--asr_method", type=str, default="WhisperX", choices=['WhisperX', 'FunASR'], help="ASR method")
+    parser.add_argument("--video_volume", type=float, default=0.2, help="Background music volume")
+    args = parser.parse_args()
 
-print("Starting Studio-Grade Pipeline Test...")
-status, output_video = engine_run(
-    root_folder=output_dir,          # Thư mục gốc lưu trữ kết quả (outputs/studio_grade)
-    url=None,                         # URL video (YouTube/Bilibili), set None nếu dùng file video cục bộ
-    video_file=video_path,            # Đường dẫn tới file video cục bộ
-    
-    # Phương pháp dịch thuật: 'LLM', 'Google Translate', 'OpenAI', 'Ollama', 'Qwen', 'Ernie', 'Bing'
-    translation_method='Google Translate', 
-    translation_target_language='vi', # Ngôn ngữ đích cho dịch thuật (ISO code: vi, en, zh-cn, ja, ko...)
-    
-    # Phương pháp TTS: 'EdgeTTS', 'vieneu', 'xtts', 'cosyvoice'
-    tts_target_language='vi',         # Ngôn ngữ đích cho TTS
-    tts_method='vieneu',             
-    
-    # Phương pháp ASR (Nhận diện giọng nói): 'WhisperX', 'FunASR'
-    asr_method='WhisperX',            
-    # Model WhisperX: 'tiny', 'base', 'small', 'medium', 'large-v1', 'large-v2', 'large-v3'
-    whisper_model='small',            
-    batch_size=8,                     # Kích thước batch cho ASR (tăng nếu có nhiều VRAM)
-    diarization=True,                 # True: Phân biệt người nói, False: Không phân biệt
-    
-    # Model tách nhạc/vocal: 'htdemucs', 'htdemucs_ft', 'htdemucs_6s', 'htdemucs_mmi'
-    demucs_model='htdemucs_ft',       
-    
-    # Độ phân giải đầu ra: '720p', '1080p', '4k', '2k'
-    target_resolution='1080p',
-    
-    # Âm lượng: 1.0 là mặc định, giảm xuống để bớt dính tiếng gốc (vocal leakage)
-    video_volume=0.2
-)
+    # Test video path
+    video_path = "/home/dangson/workspace/live-caption/video/video3.mp4"
+    output_dir = "outputs/studio_grade"
 
-print(f"Test Status: {status}")
-print(f"Final Video: {output_video}")
+    if os.path.exists(output_dir):
+        shutil.rmtree(output_dir)
+    os.makedirs(output_dir, exist_ok=True)
+
+    print(f"Starting Studio-Grade Pipeline Test (TTS: {args.tts_method}, ASR: {args.asr_method})...")
+    status, output_video = engine_run(
+        root_folder=output_dir,          # Thư mục gốc lưu trữ kết quả (outputs/studio_grade)
+        url=None,                         # URL video (YouTube/Bilibili), set None nếu dùng file video cục bộ
+        video_file=video_path,            # Đường dẫn tới file video cục bộ
+        
+        # Phương pháp dịch thuật: 'LLM', 'Google Translate', 'OpenAI', 'Ollama', 'Qwen', 'Ernie', 'Bing'
+        translation_method='Google Translate', 
+        translation_target_language='vi', # Ngôn ngữ đích cho dịch thuật (ISO code: vi, en, zh-cn, ja, ko...)
+        
+        # Phương pháp TTS: 'EdgeTTS', 'vieneu', 'xtts', 'cosyvoice'
+        tts_target_language='vi',         # Ngôn ngữ đích cho TTS
+        tts_method=args.tts_method,
+        voice=args.voice,
+        
+        # Phương pháp ASR (Nhận diện giọng nói): 'WhisperX', 'FunASR'
+        asr_method=args.asr_method,            
+        # Model WhisperX: 'tiny', 'base', 'small', 'medium', 'large-v1', 'large-v2', 'large-v3'
+        whisper_model='small',            
+        batch_size=8,                     # Kích thước batch cho ASR (tăng nếu có nhiều VRAM)
+        diarization=True,                 # True: Phân biệt người nói, False: Không phân biệt
+        
+        # Model tách nhạc/vocal: 'htdemucs', 'htdemucs_ft', 'htdemucs_6s', 'htdemucs_mmi'
+        demucs_model='htdemucs_ft',       
+        
+        # Độ phân giải đầu ra: '720p', '1080p', '4k', '2k'
+        target_resolution='1080p',
+        
+        # Âm lượng: 1.0 là mặc định, giảm xuống để bớt dính tiếng gốc (vocal leakage)
+        video_volume=args.video_volume
+    )
+
+    print(f"Test Status: {status}")
+    print(f"Final Video: {output_video}")
+
+if __name__ == "__main__":
+    main()

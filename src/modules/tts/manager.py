@@ -14,11 +14,17 @@ from .cn_tx import TextNorm
 
 normalizer = TextNorm()
 
-def preprocess_text(text):
-    text = text.replace('AI', '人工智能')
-    text = re.sub(r'(?<!^)([A-Z])', r' \1', text)
-    text = normalizer(text)
-    text = re.sub(r'(?<=[a-zA-Z])(?=\d)|(?<=\d)(?=[a-zA-Z])', ' ', text)
+def preprocess_text(text, target_language='vi'):
+    if 'zh-cn' in target_language.lower():
+        text = text.replace('AI', '人工智能')
+        text = re.sub(r'(?<!^)([A-Z])', r' \1', text)
+        text = normalizer(text)
+        text = re.sub(r'(?<=[a-zA-Z])(?=\d)|(?<=\d)(?=[a-zA-Z])', ' ', text)
+    else:
+        # Generic cleanup for non-Chinese languages
+        text = text.replace('AI', 'A I') # Pronounce letters for ASR/TTS
+        # Remove multiple spaces
+        text = re.sub(r'\s+', ' ', text).strip()
     return text
 
 def adjust_audio_length(wav_path, desired_length, sample_rate=24000, min_speed_factor=0.6, max_speed_factor=1.1):
@@ -52,7 +58,7 @@ def generate_all_wavs_under_folder(folder, method, target_language='vi', voice='
     full_wav = np.zeros((0, ))
     for i, line in enumerate(transcript):
         speaker = line['speaker']
-        text = preprocess_text(line['translation'])
+        text = preprocess_text(line['translation'], target_language)
         output_path = os.path.join(output_folder, f'{str(i).zfill(4)}.wav')
         
         # Speaker reference logic
@@ -65,6 +71,7 @@ def generate_all_wavs_under_folder(folder, method, target_language='vi', voice='
 
         # Timeline alignment
         start, end = line['start'], line['end']
+        length = end - start
         length = end - start
         last_end = len(full_wav)/24000
         
@@ -88,7 +95,11 @@ def generate_all_wavs_under_folder(folder, method, target_language='vi', voice='
     try:
         meter = pyln.Meter(24000)
         loudness = meter.integrated_loudness(full_wav)
-        full_wav = pyln.normalize.loudness(full_wav, loudness, -23.0)
+        # Avoid silencing everything if loudness is -inf (silence)
+        if np.isinf(loudness):
+            logger.warning("Integrated loudness is -inf, skipping normalization.")
+        else:
+            full_wav = pyln.normalize.loudness(full_wav, loudness, -23.0)
     except Exception as e:
         logger.warning(f"Mastering failed: {e}")
 
