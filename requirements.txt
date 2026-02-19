@@ -43,5 +43,10 @@ lightning==2.2.4
 requests
 dotenv
 loguru
+# GUI
+PySide6
+
+# Audio Processing
+pyloudnorm
 moviepy
 # ctranslate2==3.24.0
