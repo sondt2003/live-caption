@@ -1,0 +1,23 @@
+[
+  {
+    "start": 0.0,
+    "end": 2.105,
+    "text": "Hello guys how are you? I'm in Venus now with my partner. We're in Venus looking around the amazing streets. I love it. It's perfect. Look at that.",
+    "speaker": "SPEAKER_00",
+    "translation": "Xin chào các bạn, các bạn khỏe không?"
+  },
+  {
+    "start": 2.105,
+    "end": 10.24,
+    "text": "",
+    "speaker": "SPEAKER_00",
+    "translation": " Bây giờ tôi đang ở sao Kim với bạn đời của mình. Chúng tôi đang ở Venus nhìn quanh những con phố tuyệt vời. Tôi yêu nó. Nó hoàn hảo. Nhìn kìa."
+  },
+  {
+    "start": 10.88,
+    "end": 14.24,
+    "text": "So nice. I can't wait to show you the pizza guys.",
+    "speaker": "SPEAKER_00",
+    "translation": "Thật tuyệt. Tôi nóng lòng muốn cho các bạn xem pizza."
+  }
+]

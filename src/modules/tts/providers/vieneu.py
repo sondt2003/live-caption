@@ -75,45 +75,33 @@ class VieNeuProvider(BaseTTS):
                 reference_audio = speaker_wav
                 logger.debug(f"Using reference audio for cloning: {reference_audio}")
         
-        # Smart Reference Truncation (Dynamic)
-        # Strategy: 
-        # 1. Calculate rough duration needed for text (char_len / 15 chars per sec).
-        # 2. Add a buffer (e.g. +3s).
-        # 3. Truncate reference audio to this duration if it exceeds it significantly.
-        # 4. Hard limit at 12s to avoid model hallucinations.
+        # Smart Reference Truncation
+        # Strategy: VieNeu works best with short references (3-10s).
+        # Extended references (>12s) cause hallucinations ("nonsense").
         if reference_audio and os.path.exists(reference_audio):
              try:
                  info = sf.info(reference_audio)
-                 
-                 # Estimate needed duration
-                 text_len = len(text) if text else 0
-                 # Heuristic: 15 chars per second for Vietnamese speech
-                 estimated_dur = (text_len / 15.0) + 3.0 
-                 
-                 # Clamp estimated duration between 3s and 10s
-                 target_dur = max(3.0, min(estimated_dur, 10.0))
-                 
-                 if info.duration > target_dur + 1.0: # Only truncate if significantly longer
-                     logger.debug(f"Reference audio too long ({info.duration:.2f}s) for text ({text_len} chars), truncating to {target_dur:.2f}s.")
+                 if info.duration > 12.0:
+                     logger.debug(f"Reference audio too long ({info.duration:.2f}s), truncating to 10s for stability.")
                      # Load and slice
                      audio, sr = sf.read(reference_audio)
-                     max_samples = int(target_dur * sr)
+                     # Take first 10 seconds
+                     max_samples = int(10.0 * sr)
                      if len(audio) > max_samples:
                          audio = audio[:max_samples]
                          # Save to temp file
-                         temp_ref = reference_audio.replace('.wav', f'_ref_{int(target_dur)}s.wav')
+                         temp_ref = reference_audio.replace('.wav', '_ref_10s.wav')
                          sf.write(temp_ref, audio, sr)
                          reference_audio = temp_ref
                          
-                     # Also truncate prompt text if it seems excessively long compared to the NEW audio
-                     # But we prioritize keeping prompt text that matches the truncated audio context
-                     # Simple heuristic: 10s audio ~ 150 chars
-                     max_prompt_chars = int(target_dur * 18) # slightly more generous
-                     if prompt_text and len(prompt_text) > max_prompt_chars:
-                          prompt_text = prompt_text[:max_prompt_chars]
-                          last_space = prompt_text.rfind(' ')
-                          if last_space > (max_prompt_chars - 20):
-                              prompt_text = prompt_text[:last_space]
+                     # Also truncate text to match roughly (assuming ~15cps or just heuristic)
+                     # 10s speech ~ 150 chars.
+                     if prompt_text and len(prompt_text) > 150:
+                         prompt_text = prompt_text[:150]
+                         # Try to cut at last space to be cleaner
+                         last_space = prompt_text.rfind(' ')
+                         if last_space > 100:
+                             prompt_text = prompt_text[:last_space]
              except Exception as e:
                  logger.warning(f"Failed to truncate reference audio: {e}")
 
