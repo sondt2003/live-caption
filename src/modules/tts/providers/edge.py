@@ -64,7 +64,7 @@ class EdgeTTSProvider(BaseTTS):
         mp3_path = output_path.replace(".wav", ".mp3")
         import time 
         
-        for retry in range(3):
+        for retry in range(10):
             try:
                 # Use --rate if provided (not implemented yet but good for future)
                 # Use python -m edge_tts to be safe across environments
@@ -82,7 +82,7 @@ class EdgeTTSProvider(BaseTTS):
                     break
                 else:
                     logger.warning(f"EdgeTTS failed (retry {retry}): {result.stderr}")
-                    time.sleep(1) # Backoff before retry
+                    time.sleep(2) # Backoff before retry
             except Exception as e:
                 logger.error(f"EdgeTTS unexpected error: {e}")
-                time.sleep(1) # Backoff
+                time.sleep(2) # Backoff

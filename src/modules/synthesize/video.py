@@ -83,6 +83,7 @@ def get_video_info(video_path):
     """Lấy thông số video: width, height, fps, duration."""
     command = ['ffprobe', '-v', 'error', '-select_streams', 'v:0',
                '-show_entries', 'stream=width,height,r_frame_rate,duration', '-of', 'json', video_path]
+    # No changes needed for ffprobe, it already has -v error
     result = subprocess.run(command, capture_output=True, text=True)
     data = json.loads(result.stdout)['streams'][0]
     
@@ -280,6 +281,7 @@ def synthesize_video(folder, subtitles=True, speed_up=1.00, fps=30, resolution='
 
     ffmpeg_command = [
         'ffmpeg',
+        '-hide_banner', '-loglevel', 'error', '-nostats',
         *input_args,
         '-filter_complex', filter_complex,
         '-map', v_map,
@@ -313,6 +315,7 @@ def synthesize_video(folder, subtitles=True, speed_up=1.00, fps=30, resolution='
             
         ffmpeg_command = [
             'ffmpeg',
+            '-hide_banner', '-loglevel', 'error', '-nostats',
             *input_args,
             '-filter_complex', filter_complex,
             '-map', v_map,
@@ -339,6 +342,7 @@ def run_fast_merge(input_video, input_audio, output_video):
     """Thực hiện ghép video/audio bằng Stream Copy (không encode lại)."""
     ffmpeg_command = [
         'ffmpeg',
+        '-hide_banner', '-loglevel', 'error', '-nostats',
         '-analyzeduration', '100M',
         '-probesize', '100M',
         '-i', input_video,

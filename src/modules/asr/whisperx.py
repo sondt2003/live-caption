@@ -39,13 +39,13 @@ def release_whisperx():
     import gc
     gc.collect()
     
-def load_whisper_model(model_name: str = 'large', download_root = 'models/ASR/whisper', device='auto'):
+def load_whisper_model(model_name: str = 'large', download_root = 'models/ASR/whisper', device='auto', language=None):
     """Load WhisperX transcription model"""
     if model_name == 'large':
         pretrain_model = os.path.join(download_root,"faster-whisper-large-v3")
         model_name = 'large-v3' if not os.path.isdir(pretrain_model) else pretrain_model
         
-    global whisper_model
+    global whisper_model, language_code
     if whisper_model is not None:
         return
     if device == 'auto':
@@ -55,11 +55,11 @@ def load_whisper_model(model_name: str = 'large', download_root = 'models/ASR/wh
     
     # Use whisperx.load_model instead of direct faster_whisper
     if device == 'cpu':
-        whisper_model = whisperx.load_model(model_name, download_root=download_root, device=device, compute_type='int8')
+        whisper_model = whisperx.load_model(model_name, download_root=download_root, device=device, compute_type='int8', language=language)
     else:
         # Save VRAM by using int8_float16 (reduces usage by ~30%)
         # float16 is faster but uses more VRAM than int8 variants
-        whisper_model = whisperx.load_model(model_name, download_root=download_root, device=device, compute_type='int8_float16')
+        whisper_model = whisperx.load_model(model_name, download_root=download_root, device=device, compute_type='int8_float16', language=language)
         
     t_end = time.time()
     logger.info(f'Loaded WhisperX model: {model_name} in {t_end - t_start:.2f}s')
@@ -130,7 +130,7 @@ def whisperx_transcribe_audio(wav_path, model_name: str = 'large', download_root
     }
     
     # 2. Transcribe
-    load_whisper_model(model_name, download_root, device)
+    load_whisper_model(model_name, download_root, device, language=language)
     logger.info(f"Transcribing...")
     t_start = time.time()
     # Use pre-loaded audio for transcription

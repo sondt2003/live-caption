@@ -7,12 +7,10 @@ import numpy as np
 import pyloudnorm as pyln
 from loguru import logger
 import subprocess
-from utils.utils import save_wav, save_wav_norm
+from src.utils.utils import save_wav, save_wav_norm
 from .factory import TTSFactory
 
 def stretch_audio_ffmpeg(input_path, output_path, rate, sample_rate=24000):
-    """Sử dụng FFmpeg atempo để thay đổi tốc độ âm thanh với chất lượng cao hơn librosa."""
-    # atempo chỉ hỗ trợ 0.5 đến 2.0. Phải nối chuỗi nếu ngoài khoảng này.
     filters = []
     temp_rate = rate
     while temp_rate > 2.0:
@@ -22,26 +20,16 @@ def stretch_audio_ffmpeg(input_path, output_path, rate, sample_rate=24000):
         filters.append("atempo=0.5")
         temp_rate /= 0.5
     filters.append(f"atempo={temp_rate:.4f}")
-    
     filter_str = ",".join(filters)
-    cmd = [
-        'ffmpeg', '-i', input_path,
-        '-filter:a', filter_str,
-        '-ar', str(sample_rate),
-        '-ac', '1',
-        output_path, '-y'
-    ]
+    cmd = ['ffmpeg', '-i', input_path, '-filter:a', filter_str, '-ar', str(sample_rate), '-ac', '1', output_path, '-y']
     subprocess.run(cmd, capture_output=True)
 
 def preprocess_text(text, target_language='vi'):
-    if 'zh-cn' in target_language.lower():
+    if 'zh' in target_language.lower():
         text = text.replace('AI', '人工智能')
-        # Add basic spaces between English and Chinese if needed
         text = re.sub(r'(?<=[a-zA-Z])(?=\d)|(?<=\d)(?=[a-zA-Z])', ' ', text)
     else:
-        # Generic cleanup for non-Chinese languages
-        text = text.replace('AI', 'A I') # Pronounce letters for ASR/TTS
-        # Remove multiple spaces
+        text = text.replace('AI', 'A I')
         text = re.sub(r'\s+', ' ', text).strip()
     return text
 
@@ -51,21 +39,10 @@ class VoiceMapper:
         self.default_voice = default_voice
         self.mapping = self._load_mapping()
         self.speaker_cache = {}
-        
-        # Default pools (mostly for Edge TTS)
         self.pools = {
-            'vi': {
-                'male': 'vi-VN-NamMinhNeural',
-                'female': 'vi-VN-HoaiMyNeural'
-            },
-            'zh-cn': {
-                'male': 'zh-CN-YunxiNeural',
-                'female': 'zh-CN-XiaoxiaoNeural'
-            },
-            'en': {
-                'male': 'en-US-GuyNeural',
-                'female': 'en-US-AriaNeural'
-            }
+            'vi': {'male': 'vi-VN-NamMinhNeural', 'female': 'vi-VN-HoaiMyNeural'},
+            'zh-cn': {'male': 'zh-CN-YunxiNeural', 'female': 'zh-CN-XiaoxiaoNeural'},
+            'en': {'male': 'en-US-GuyNeural', 'female': 'en-US-AriaNeural'}
         }
         
     def _load_mapping(self):
@@ -79,436 +56,192 @@ class VoiceMapper:
         return mapping
 
     def get_voice(self, speaker_id, text=""):
-        # 1. Ưu tiên mapping cứng từ .env
-        if speaker_id in self.mapping:
-            return self.mapping[speaker_id]
-        
-        # 2. Nếu đã gán cho speaker này rồi thì dùng lại
-        if speaker_id in self.speaker_cache:
-            return self.speaker_cache[speaker_id]
-
-        # 3. Phán đoán giới tính dựa trên đại từ (Tiếng Việt)
+        if speaker_id in self.mapping: return self.mapping[speaker_id]
+        if speaker_id in self.speaker_cache: return self.speaker_cache[speaker_id]
         lang_key = 'vi' if 'vi' in self.target_language else ('zh-cn' if 'zh' in self.target_language else 'en')
         pool = self.pools.get(lang_key, self.pools['en'])
-
         if lang_key == 'vi':
             male_keywords = ['anh', 'ông', 'chú', 'bác', 'cậu', 'ngài', 'nam']
             female_keywords = ['chị', 'bà', 'cô', 'dì', 'mợ', 'nữ']
-            
             text_lower = text.lower()
-            male_score = sum(1 for k in male_keywords if re.search(fr'\b{k}\b', text_lower))
-            female_score = sum(1 for k in female_keywords if re.search(fr'\b{k}\b', text_lower))
-            
-            if male_score > female_score:
+            m_score = sum(1 for k in male_keywords if re.search(fr'\b{k}\b', text_lower))
+            f_score = sum(1 for k in female_keywords if re.search(fr'\b{k}\b', text_lower))
+            if m_score > f_score:
                 self.speaker_cache[speaker_id] = pool['male']
                 return pool['male']
-            elif female_score > male_score:
+            elif f_score > m_score:
                 self.speaker_cache[speaker_id] = pool['female']
                 return pool['female']
-
-        # 4. Tự động xen kẽ nếu có nhiều speaker (SPEAKER_00, 01...)
         try:
             nums = re.findall(r'\d+', speaker_id)
             idx = int(nums[0]) if nums else len(self.speaker_cache)
-        except:
-            idx = len(self.speaker_cache)
-            
-        if idx % 2 == 1:
-            # Nếu speaker lẻ, đổi sang giọng khác với mặc định
-            voice = pool['male'] if self.default_voice == pool['female'] else pool['female']
-        else:
-            voice = self.default_voice
-            
+        except: idx = len(self.speaker_cache)
+        voice = pool['male'] if idx % 2 == 1 else self.default_voice
         self.speaker_cache[speaker_id] = voice
         return voice
 
 def adjust_audio_length(wav_path, desired_length, sample_rate=44100, min_speed_factor=0.01, max_speed_factor=10.0):
     try:
-        # Load directly to numpy for manipulation
         wav_orig, _ = librosa.load(wav_path, sr=sample_rate)
         current_length = len(wav_orig) / sample_rate
     except Exception as e:
-        logger.warning(f"Audio load failed, returning silence: {e}")
         return np.zeros((int(desired_length * sample_rate), )), desired_length
-
-    # CASE 1: Audio is shorter (Needs lengthening) -> Pad with silence
     if current_length < desired_length:
-        gap = desired_length - current_length
-        padding = np.zeros((int(gap * sample_rate), ))
-        wav_final = np.concatenate((wav_orig, padding))
-        return wav_final, desired_length
-
-    # CASE 2: Audio is longer (Needs shortening) -> Stretch (speed up)
+        padding = np.zeros((int((desired_length - current_length) * sample_rate), ))
+        return np.concatenate((wav_orig, padding)), desired_length
     ratio = desired_length / current_length
     final_ratio = max(ratio, min_speed_factor)
-    
     try:
-        # FFmpeg expects rate (1/final_ratio). rate > 1.0 speeds up.
         rate = 1.0 / final_ratio
         target_path = wav_path.replace('.wav', '_stretched.wav')
         stretch_audio_ffmpeg(wav_path, target_path, rate, sample_rate=sample_rate)
-        
-        if os.path.exists(target_path):
-            wav_final, _ = librosa.load(target_path, sr=sample_rate)
-        else:
-            raise Exception("FFmpeg failed to generate stretched audio")
-            
-    except Exception as ex:
-        logger.error(f"Time stretch failed: {ex}. Using original.")
-        # Crop as fallback
-        wav_final = wav_orig[:int(desired_length * sample_rate)]
-
-    actual_duration = len(wav_final) / sample_rate
-    return wav_final, actual_duration
+        if os.path.exists(target_path): wav_final, _ = librosa.load(target_path, sr=sample_rate)
+        else: raise Exception("FFmpeg failed")
+    except: wav_final = wav_orig[:int(desired_length * sample_rate)]
+    return wav_final, len(wav_final) / sample_rate
 
 def get_gender_from_audio(wav_path, start, end, audio_data=None, sr=16000):
-    """
-    Detect gender based on average pitch (F0).
-    Male: < 165Hz
-    Female: > 165Hz
-    """
     try:
-        # Load specific segment
         duration = end - start
-        if duration < 0.5: return None # Too short to decide
-        
+        if duration < 0.5: return None
         if audio_data is not None:
-            # Optimization: Use pre-loaded audio data slice
-            start_sample = int(start * sr)
-            end_sample = int(end * sr)
-            y = audio_data[start_sample:end_sample]
-        else:
-            y, sr = librosa.load(wav_path, sr=sr, offset=start, duration=duration)
-        
-        # Estimate pitch using PYIN
+            start_s = int(start * sr)
+            end_s = int(end * sr)
+            y = audio_data[start_s:end_s]
+        else: y, sr = librosa.load(wav_path, sr=sr, offset=start, duration=duration)
         f0, voiced_flag, voiced_probs = librosa.pyin(y, fmin=50, fmax=300, sr=sr)
-        
-        # Filter out unvoiced parts
         voiced_f0 = f0[voiced_flag]
-        
-        if len(voiced_f0) == 0:
-            return None
-            
-        return np.mean(voiced_f0) # Return Average Pitch
-            
-    except Exception as e:
-        logger.warning(f"Gender detection failed: {e}")
-        return None
+        return np.mean(voiced_f0) if len(voiced_f0) > 0 else None
+    except: return None
 
 def generate_all_wavs_under_folder(folder, method='auto', target_language='vi', voice='vi-VN-HoaiMyNeural', video_volume=1.0):
     transcript_path = os.path.join(folder, 'translation.json')
     output_folder = os.path.join(folder, 'wavs')
     os.makedirs(output_folder, exist_ok=True)
+    with open(transcript_path, 'r', encoding='utf-8') as f: transcript = json.load(f)
 
-    with open(transcript_path, 'r', encoding='utf-8') as f:
-        transcript = json.load(f)
-
-    # Normalize language code
-    target_language = target_language.lower().replace('tiếng việt', 'vi').replace('简体中文', 'zh-cn')
+    target_language = target_language.lower()
+    if 'vi' in target_language: target_language = 'vi'
+    elif 'zh' in target_language: target_language = 'zh-cn'
+    elif 'en' in target_language: target_language = 'en'
     
-    # --- GENDER DETECTION (ONE-TIME PER SPEAKER) ---
-    # Map SPEAKER_00 -> 'male'/'female'
     speaker_gender_map = {}
-    
-    # Only run if target is Vietnamese (EdgeTTS currently only supported for this logic)
     if 'vi' in target_language:
-        logger.info("Analyzing speaker genders for consistent voice selection...")
-        speaker_pitches = {} # { 'SPEAKER_00': [120, 130, ...], 'SPEAKER_01': ... }
-        
-        # force_male_voice flag
-        force_male_voice = False
-        
-        # Check if Diarization was OFF (only SPEAKER_00 exists)
-        unique_speakers = set(line['speaker'] for line in transcript)
-        if len(unique_speakers) <= 1:
-            logger.info("Single speaker detected (Diarization OFF). Skipping gender check and defaulting to MALE voice.")
-            force_male_voice = True
-        
-        # Pre-load vocals for faster pitch analysis
+        pitches = {}
+        unique_spk = set(l['speaker'] for l in transcript)
+        force_male = len(unique_spk) <= 1
         vocals_path = os.path.join(folder, 'audio_vocals.wav')
-        audio_vocals = None
-        sr_vocals = 44100
-        if os.path.exists(vocals_path):
-            audio_vocals, _ = librosa.load(vocals_path, sr=sr_vocals)
-
+        audio_v = None
+        sr_v = 44100
+        if os.path.exists(vocals_path): audio_v, _ = librosa.load(vocals_path, sr=sr_v)
         for line in transcript:
             spk = line['speaker']
-            
-            # If forcing male voice, skip detection
-            if force_male_voice:
-                speaker_gender_map[spk] = 'male'
-                continue
+            if force_male: speaker_gender_map[spk] = 'male'; continue
+            if spk not in pitches: pitches[spk] = []
+            if len(pitches[spk]) < 5:
+                p = get_gender_from_audio(vocals_path, line.get('start'), line.get('end'), audio_data=audio_v, sr=sr_v)
+                if p: pitches[spk].append(p)
+        for spk, p_list in pitches.items():
+            if not p_list: speaker_gender_map[spk] = 'female'
+            else: speaker_gender_map[spk] = 'male' if np.mean(p_list) < 165 else 'female'
 
-            if spk not in speaker_pitches:
-                speaker_pitches[spk] = []
-            
-            # Collect pitch samples (max 5 samples per speaker to save time)
-            if len(speaker_pitches[spk]) < 5:
-                pitch = get_gender_from_audio(vocals_path, line.get('start'), line.get('end'), audio_data=audio_vocals, sr=sr_vocals)
-                if pitch:
-                    speaker_pitches[spk].append(pitch)
-        
-        # Determine gender based on average pitch of all samples
-        for spk, pitches in speaker_pitches.items():
-            if not pitches:
-                speaker_gender_map[spk] = 'female' # Default
-                continue
-            
-            avg_pitch = np.mean(pitches)
-            gender = 'male' if avg_pitch < 165 else 'female'
-            speaker_gender_map[spk] = gender
-            logger.info(f"Detected {spk}: {gender} (Avg Pitch: {avg_pitch:.1f}Hz)")
-    
-    # Check if Diarization was effective (more than 1 speaker detected)
-    # If only 1 speaker (SPEAKER_00), we should fallback to per-segment detection
-    # because it likely means Diarization was OFF or failed.
-    is_multi_speaker = len(speaker_gender_map) > 1
-    if not is_multi_speaker and 'vi' in target_language:
-        logger.info("Single speaker detected. Using consistent gender for entire video.")
-    # -----------------------------------------------
-    # -----------------------------------------------
-
-    # Khởi tạo engine TTS từ Factory
-    if method is None or method.lower() == 'auto':
-        engine = TTSFactory.get_best_tts_engine(target_language)
-    else:
-        engine = TTSFactory.get_tts_engine(method)
-
-    # 1. Initialize VoiceMapper
+    engine = TTSFactory.get_best_tts_engine(target_language) if method in [None, 'auto'] else TTSFactory.get_tts_engine(method)
     voice_mapper = VoiceMapper(target_language=target_language, default_voice=voice)
-    
-    # Collect all tasks for batch processing
     tasks = []
     for i, line in enumerate(transcript):
         speaker = line['speaker']
         text = preprocess_text(line['translation'], target_language)
-        output_path = os.path.join(output_folder, f'{str(i).zfill(4)}.wav')
-        
-        # Logic tìm kiếm giọng tham chiếu (Reference Audio)
-        # Ưu tiên các file cắt riêng cho từng speaker (ngắn và tập trung hơn)
-        speaker_wav = os.path.join(folder, 'SPEAKER', f'{speaker}.wav')
-        if not os.path.exists(speaker_wav):
-            speaker_wav = os.path.join(folder, 'audio_vocals.wav')
+        out_p = os.path.join(output_folder, f'{str(i).zfill(4)}.wav')
+        spk_wav = os.path.join(folder, 'SPEAKER', f'{speaker}.wav')
+        if not os.path.exists(spk_wav): spk_wav = os.path.join(folder, 'audio_vocals.wav')
+        t_voice = voice_mapper.get_voice(speaker, text)
+        if (voice in [None, 'auto', 'vi-VN-HoaiMyNeural']) and 'vi' in target_language and "EdgeTTS" in str(type(engine)):
+            t_voice = 'vi-VN-NamMinhNeural' if speaker_gender_map.get(speaker, 'female') == 'male' else 'vi-VN-HoaiMyNeural'
+        if not text.strip():
+            logger.warning(f"Skipping empty text for segment {i}")
+            continue
+        tasks.append({"text": text, "output_path": out_p, "speaker_wav": spk_wav, "ref_text": None, "target_language": target_language, "voice": t_voice})
 
-        # Consistent Voice Selection based on Speaker ID
-        task_voice = voice_mapper.get_voice(speaker, text)
-        
-        # Optimization/Fix: Only override with gender-based voice if no specific voice was requested by the user
-        # or if the user explicitly requested 'auto' or 'vi-VN-HoaiMyNeural' (default)
-        is_default_voice = (voice is None or voice == 'auto' or voice == 'vi-VN-HoaiMyNeural')
-        
-        if is_default_voice and hasattr(engine, 'language_map') and 'vi' in target_language and "EdgeTTS" in str(type(engine)):
-            # Stable Mode: Use pre-calculated gender for the speaker
-            gender = speaker_gender_map.get(speaker, 'female')
-
-            if gender == 'male':
-                task_voice = 'vi-VN-NamMinhNeural'
-            else:
-                task_voice = 'vi-VN-HoaiMyNeural'
-
-        # VieNeu cloning works better without ref_text if reference is cross-language
-        tasks.append({
-            "text": text,
-            "output_path": output_path,
-            "speaker_wav": speaker_wav,
-            "ref_text": None, # Skip ref_text to avoid alignment issues/token overflow
-            "target_language": target_language,
-            "voice": task_voice
-        })
-
-    # Gọi Engine để tạo âm thanh hàng loạt (Batch Processing)
-    if hasattr(engine, 'generate_batch'):
-        engine.generate_batch(tasks)
+    if hasattr(engine, 'generate_batch'): engine.generate_batch(tasks)
     else:
-        # Fallback for engines that don't support batching
-        for task in tasks:
-            engine.generate(task.pop("text"), task.pop("output_path"), **task)
+        for t in tasks: engine.generate(t.pop("text"), t.pop("output_path"), **t)
 
     full_wav = np.zeros((0, ))
     TARGET_SR = 44100
-    for i, line in enumerate(transcript):
-        # Backup original timings (STABLE REFERENCE)
-        if 'original_start' not in line:
-            line['original_start'] = line.get('start', 0.0)
-        if 'original_end' not in line:
-            line['original_end'] = line.get('end', 0.0)
-        
-        output_path = os.path.join(output_folder, f'{str(i).zfill(4)}.wav')
-        last_end = len(full_wav)/TARGET_SR
-        
-    # Timeline Pacing Logic
     current_out_end = 0.0
-    
-    # Khoảng lặng tối thiểu giữa các câu (giây).
     MIN_GAP = float(os.getenv('MIN_GAP', 0))
     MAX_PTS_FACTOR = float(os.getenv('MAX_PTS_FACTOR', 1.0))
     
     for i, line in enumerate(transcript):
-        output_path = os.path.join(output_folder, f'{str(i).zfill(4)}.wav')
-        orig_start = line['original_start']
-        orig_end = line['original_end']
-        orig_dur = orig_end - orig_start
-        
-        # 1. Determine the earliest possible start time
-        target_start = max(orig_start, current_out_end + MIN_GAP)
-        
-        # 2. Add silence to reach the target start in the main wav
-        if target_start > current_out_end:
-            full_wav = np.concatenate((full_wav, np.zeros((int((target_start - current_out_end) * TARGET_SR), ))))
-        
-        current_start = len(full_wav)/TARGET_SR
-        line['start'] = current_start
-        
-        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-            # Load raw duration for calculation
-            raw_vox, _ = librosa.load(output_path, sr=TARGET_SR)
-            raw_dur = len(raw_vox) / TARGET_SR
-            
-            # PHYSICAL VIDEO LIMIT: 1.0x (Original duration).
-            # Thus, audio SHOULD NOT be longer than orig_dur.
-            max_seg_allowed = orig_dur * MAX_PTS_FACTOR
-            
-            # ABSOLUTE DEADLINE: Audio must finish before this point to keep entire video in sync.
-            max_end_allowed = orig_end * MAX_PTS_FACTOR
-            
-            # 1. Ideal Target: Finish at original English time (Real-time sync)
-            ideal_dur = max(0.2, orig_end - target_start)
-            
-            # 2. Hard Limit: Cannot exceed physical video stretch
-            hard_limit_dur = max(0.2, min(max_seg_allowed, max_end_allowed - target_start))
-            
-            # 3. Decision: Use ideal if it doesn't require extreme compression, else use hard limit
-            needed_ratio_to_ideal = ideal_dur / raw_dur if raw_dur > 0 else 1.0
-            
-            # TIGHTENED SYNC: Increase threshold to catch up more aggressively.
-            if needed_ratio_to_ideal >= 0.5: # Allow up to 2x speedup for sync
-                stretch_to = ideal_dur
-                logger.debug(f"Segment {i}: Catch-up target (Ideal: {ideal_dur:.2f}s)")
-            else:
-                # Catching up is too hard, at least try to stay within the 1.0x video limit
-                stretch_to = hard_limit_dur
-                logger.debug(f"Segment {i}: Video-limit target (Max: {hard_limit_dur:.2f}s)")
-
-            # We allow compression up to 6.6x (0.15) to fit these strict limits
-            # This is necessary for short videos where sentences are long.
-            local_min_speed_factor = 0.15
-            
-            wav, adjusted_len = adjust_audio_length(output_path, stretch_to, min_speed_factor=local_min_speed_factor)
-            line['source_duration'] = orig_dur
+        if 'original_start' not in line: line['original_start'] = line.get('start', 0.0)
+        if 'original_end' not in line: line['original_end'] = line.get('end', 0.0)
+        output_p = os.path.join(output_folder, f'{str(i).zfill(4)}.wav')
+        t_start = max(line['original_start'], current_out_end + MIN_GAP)
+        if t_start > current_out_end:
+            full_wav = np.concatenate((full_wav, np.zeros((int((t_start - current_out_end) * TARGET_SR), ))))
+        c_start = len(full_wav)/TARGET_SR
+        line['start'] = c_start
+        if os.path.exists(output_p) and os.path.getsize(output_p) > 0:
+            raw_vox, _ = librosa.load(output_p, sr=TARGET_SR)
+            raw_d = len(raw_vox) / TARGET_SR
+            o_dur = line['original_end'] - line['original_start']
+            max_s = o_dur * MAX_PTS_FACTOR
+            max_e = line['original_end'] * MAX_PTS_FACTOR
+            ideal_d = max(0.2, line['original_end'] - t_start)
+            hard_d = max(0.2, min(max_s, max_e - t_start))
+            stretch_t = ideal_d if (ideal_d/raw_d if raw_d > 0 else 1.0) >= 0.5 else hard_d
+            wav, adj_l = adjust_audio_length(output_p, stretch_t, min_speed_factor=0.15)
         else:
-            logger.warning(f"Segment {i}: Output path {output_path} not found. Filling with silence.")
-            line['source_duration'] = orig_dur
-            wav = np.zeros((int(orig_dur * TARGET_SR), ))
-            adjusted_len = orig_dur
-
+            wav = np.zeros((int((line['original_end']-line['original_start']) * TARGET_SR), ))
+            adj_l = line['original_end'] - line['original_start']
         full_wav = np.concatenate((full_wav, wav))
-        line['end'] = current_start + adjusted_len
+        line['end'] = c_start + adj_l
         current_out_end = line['end']
-        line['duration'] = adjusted_len
+        line['duration'] = adj_l
 
-    # Lưu lại transcript đã cập nhật với thông tin đồng bộ thích ứng
-    with open(transcript_path, 'w', encoding='utf-8') as f:
-        json.dump(transcript, f, ensure_ascii=False, indent=2)
-
-    # Xử lý âm thanh hậu kỳ (Mastering)
-    logger.info("Đang xử lý âm thanh hậu kỳ (Studio-Grade Mastering)...")
+    with open(transcript_path, 'w', encoding='utf-8') as f: json.dump(transcript, f, ensure_ascii=False, indent=2)
     try:
-        meter = pyln.Meter(44100)
+        meter = pyln.Meter(TARGET_SR)
         loudness = meter.integrated_loudness(full_wav)
-        if np.isinf(loudness):
-            logger.warning("Độ lớn âm thanh không xác định (-inf), bỏ qua chuẩn hóa.")
-        else:
-            full_wav = pyln.normalize.loudness(full_wav, loudness, -23.0)
-    except Exception as e:
-        logger.warning(f"Mastering thất bại: {e}")
+        if not np.isinf(loudness): full_wav = pyln.normalize.loudness(full_wav, loudness, -23.0)
+    except: pass
 
-    # ĐỒNG BỘ ĐỘ DÀI: Đảm bảo âm thanh dài bằng video (bao gồm cả đoạn 'tail')
     try:
-        # Optimization: Use pre-loaded audio data to get duration if possible
-        orig_total_dur = 0
-        if 'audio_vocals' in locals() and audio_vocals is not None:
-            orig_total_dur = len(audio_vocals) / sr_vocals
-        elif os.path.exists(instr_path):
-            orig_total_dur = librosa.get_duration(path=instr_path)
+        instr_path = os.path.join(folder, 'audio_instruments.wav')
+        orig_t_dur = 0
+        if os.path.exists(instr_path): orig_t_dur = librosa.get_duration(path=instr_path)
+        elif os.path.exists(os.path.join(folder, 'audio_vocals.wav')):
+            orig_t_dur = librosa.get_duration(path=os.path.join(folder, 'audio_vocals.wav'))
             
-        if orig_total_dur > 0 and transcript:
-            last_line = transcript[-1]
-            last_orig_end = last_line['original_end']
-            last_target_end = last_line['end']
-            
-            final_v_dur = last_target_end + max(0, orig_total_dur - last_orig_end)
-            current_audio_dur = full_wav.shape[-1] / 44100
-            
-            if final_v_dur > current_audio_dur:
-                padding_len = int((final_v_dur - current_audio_dur) * 44100)
-                full_wav = np.concatenate([full_wav, np.zeros(padding_len)])
-                logger.info(f"Đã thêm {final_v_dur - current_audio_dur:.2f}s khoảng lặng vào cuối để khớp với video.")
-
-    except Exception as e:
-        logger.warning(f"Không thể đồng bộ độ dài audio với video: {e}")
+        if orig_t_dur > 0 and transcript:
+            final_v_dur = transcript[-1]['end'] + max(0, orig_t_dur - transcript[-1]['original_end'])
+            curr_a_dur = len(full_wav) / TARGET_SR
+            if final_v_dur > curr_a_dur:
+                full_wav = np.concatenate([full_wav, np.zeros(int((final_v_dur - curr_a_dur) * TARGET_SR))])
+    except: pass
 
     save_wav_norm(full_wav, os.path.join(folder, 'audio_tts.wav'))
-    
-    # Dọn dẹp các tệp tạm để tiết kiệm không gian
-    try:
-        shutil.rmtree(output_folder)
-        logger.info(f"Đã dọn dẹp thư mục tệp tạm TTS: {output_folder}")
-    except Exception as e:
-        logger.warning(f"Không thể dọn dẹp thư mục tệp tạm TTS: {e}")
-    
-    # Trộn với nhạc nền/âm thanh gốc nếu có
-    # Optimization: Use pre-loaded audio_vocals if available, or load instr once
-    instr_path = os.path.join(folder, 'audio_instruments.wav')
-    target_sr = 44100
+    try: shutil.rmtree(output_folder)
+    except: pass
     
     if os.path.exists(instr_path):
-        # Load as stereo if available
-        instr, _ = librosa.load(instr_path, sr=target_sr, mono=False)
-        
-        # ĐỒNG BỘ ĐỘ DÀI: Đảm bảo nhạc nền dài bằng âm thanh TTS (padding silence nếu cần)
+        instr, _ = librosa.load(instr_path, sr=TARGET_SR, mono=False)
         if instr.ndim > 1:
-            # Stereo handling
             if instr.shape[1] < len(full_wav):
-                padding = np.zeros((2, len(full_wav) - instr.shape[1]))
-                instr = np.concatenate([instr, padding], axis=1)
-            
-            # Expand full_wav (mono) to stereo
-            full_wav_stereo = np.tile(full_wav, (2, 1))
-            combined = full_wav_stereo + instr[:, :len(full_wav)] * video_volume
+                instr = np.concatenate([instr, np.zeros((2, len(full_wav) - instr.shape[1]))], axis=1)
+            f_wav_s = np.tile(full_wav, (2, 1))
+            combined = f_wav_s + instr[:, :len(full_wav)] * video_volume
         else:
-            # Mono fallback
             if len(instr) < len(full_wav):
-                padding = np.zeros(len(full_wav) - len(instr))
-                instr = np.concatenate([instr, padding])
+                instr = np.concatenate([instr, np.zeros(len(full_wav) - len(instr))])
             combined = full_wav + instr[:len(full_wav)] * video_volume
-            
-        save_wav_norm(combined, os.path.join(folder, 'audio_combined.wav'), sample_rate=target_sr)
-    elif audio_vocals is not None:
-        # Use pre-loaded vocals if instruments not found (fallback)
-        # Resample to target_sr
-        if sr_vocals != target_sr:
-            instr = librosa.resample(audio_vocals, orig_sr=sr_vocals, target_sr=target_sr)
-        else:
-            instr = audio_vocals
-            
-        if len(instr) < len(full_wav):
-            padding = np.zeros(len(full_wav) - len(instr))
-            instr = np.concatenate([instr, padding])
-        combined = full_wav + instr[:len(full_wav)] * video_volume
-        save_wav_norm(combined, os.path.join(folder, 'audio_combined.wav'), sample_rate=target_sr)
+        save_wav_norm(combined, os.path.join(folder, 'audio_combined.wav'), sample_rate=TARGET_SR)
     else:
-        # Just save the mono TTS at 44.1k
-        save_wav_norm(full_wav, os.path.join(folder, 'audio_combined.wav'), sample_rate=target_sr)
-
-    return f'Xử lý xong thư mục {folder}', os.path.join(folder, 'audio_combined.wav'), None
+        save_wav_norm(full_wav, os.path.join(folder, 'audio_combined.wav'), sample_rate=TARGET_SR)
+    return f'Done {folder}', os.path.join(folder, 'audio_combined.wav'), None
 
 def init_TTS(method='edge'):
-    """Khởi tạo môi trường cho Engine TTS."""
     from .factory import TTSFactory
     engine = TTSFactory.get_tts_engine(method)
-    if hasattr(engine, '_init_model'):
-        engine._init_model()
-    elif hasattr(engine, '_init_env'):
-        engine._init_env()
-
-
+    if hasattr(engine, '_init_model'): engine._init_model()
+    elif hasattr(engine, '_init_env'): engine._init_env()

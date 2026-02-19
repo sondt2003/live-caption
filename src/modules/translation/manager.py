@@ -1,305 +1,145 @@
-# -*- coding: utf-8 -*-
-import json
 import os
 import re
-import time
-import traceback
+import json
+import torch
 from loguru import logger
 from .factory import TranslatorFactory
 
-def get_necessary_info(info: dict):
-    return {
-        'title': info['title'],
-        'uploader': info['uploader'],
-        'description': info['description'],
-        'upload_date': info['upload_date'],
-        'tags': info['tags'],
-    }
-
-def ensure_transcript_length(transcript, max_length=4000):
-    mid = len(transcript)//2
-    before, after = transcript[:mid], transcript[mid:]
-    length = max_length//2
-    return before[:length] + after[-length:]
+def get_transcript_summary(transcript):
+    """
+    Get a summary of the transcript for context-aware translation.
+    """
+    all_text = " ".join([seg['text'] for seg in transcript])
+    return all_text[:500] # Limit to 500 chars for summary context
 
 def split_text_into_sentences(para):
-    para = re.sub(r'([。！？\?])([^，。！？\?”’》])', r"\1\n\2", para)
-    para = re.sub(r'(\.{6})([^，。！？\?”’》])', r"\1\n\2", para)
-    para = re.sub(r'(\…{2})([^，。！？\?”’》])', r"\1\n\2", para)
-    para = re.sub(r'([。！？\?][”’])([^，。！？\?”’》])', r'\1\n\2', para)
+    # Support both English and CJK punctuation
+    para = re.sub(r'([。！？\?\.!])([^，。！？\?\.!”’》])', r"\1\n\2", para)
+    para = re.sub(r'(\.{6})([^，。！？\?\.!”’》])', r"\1\n\2", para)
+    para = re.sub(r'(\…{2})([^，。！？\?\.!”’》])', r"\1\n\2", para)
+    para = re.sub(r'([。！？\?\.!][”’])([^，。！？\?\.!”’》])', r'\1\n\2', para)
     para = para.rstrip()
-    return para.split("\n")
-
-def translation_postprocess(result):
-    result = re.sub(r'\（[^)]*\）', '', result)
-    result = result.replace('...', '，')
-    result = re.sub(r'(?<=\d),(?=\d)', '', result)
-    result = result.replace('²', '的平方').replace(
-        '————', '：').replace('——', '：').replace('°', '度')
-    result = result.replace("AI", '人工智能')
-    return result
-
-def valid_translation(text, translation):
-    if (translation.startswith('```') and translation.endswith('```')):
-        translation = translation[3:-3]
-        return True, translation_postprocess(translation)
+    sentences = para.split("\n")
     
-    if (translation.startswith('“') and translation.endswith('”')) or (translation.startswith('"') and translation.endswith('"')):
-        translation = translation[1:-1]
-        return True, translation_postprocess(translation)
-
-    # Simplified common patterns
-    for pattern in ['：“', '："', ':"', ': "']:
-        if pattern in translation and ('”' in translation or '"' in translation):
-            sep = '”' if '”' in translation else '"'
-            translation = translation.split(pattern)[-1].split(sep)[0]
-            return True, translation_postprocess(translation)
-
-    if len(text) <= 5 and len(translation) > 40: # Much looser for CJK vs Vietnamese
-        return False, 'Only translate the following sentence and give me the result.'
-    
-    forbidden = ['翻译', '译文', '简体中文', 'translate', 'translation']
-    translation = translation.strip()
-    for word in forbidden:
-        if word in translation and len(translation) > len(word) * 2: # Only fail if it's likely a preamble
-            return False, f"Don't include `{word}` in the translation."
-    
-    return True, translation_postprocess(translation)
-
-def split_sentences(translation, use_char_based_end=True):
-    output_data = []
-    for item in translation:
-        start = item['start']
-        text = item['text']
-        speaker = item['speaker']
-        translation_text = item['translation']
-
-        if not translation_text or len(translation_text.strip()) == 0:
-            output_data.append({
-                "start": round(start, 3), "end": round(item['end'], 3),
-                "text": text, "speaker": speaker, "translation": translation_text or "未翻译"
-            })
-            continue
-
-        sentences = split_text_into_sentences(translation_text)
-        duration_per_char = (item['end'] - item['start']) / max(1, len(translation_text)) if use_char_based_end else 0
-
-        for j, sentence in enumerate(sentences):
-            # Only provide the full original text as a 'prompt' for the context of the first segment of a split
-            # OR better: provide nothing if we don't have a 1:1 mapping to avoid hallucination.
-            # For now, we provide the text but only for the first segment to reduce clutter.
-            segment_text = text if j == 0 else "" 
+    # Fallback for very long segments without any punctuation (e.g. more than 30 words)
+    final_sentences = []
+    for s in sentences:
+        words = s.split()
+        if len(words) > 30:
+            for i in range(0, len(words), 20):
+                final_sentences.append(" ".join(words[i:i+20]))
+        else:
+            final_sentences.append(s)
             
-            sentence_end = start + duration_per_char * len(sentence) if use_char_based_end else item['end']
-            output_data.append({
-                "start": round(start, 3), "end": round(sentence_end, 3),
-                "text": segment_text, "speaker": speaker, "translation": sentence
-            })
-            if use_char_based_end: start = sentence_end
-    return output_data
+    return [s.strip() for s in final_sentences if s.strip()]
 
-def summarize(info, transcript, target_language='vi', method='LLM'):
-    text_content = ' '.join(line['text'] for line in transcript)
-    text_content = ensure_transcript_length(text_content, max_length=2000)
-    info_message = f'Title: "{info["title"]}" Author: "{info["uploader"]}". '
-    
+def _translate(summary, transcript, target_language, method):
     translator = TranslatorFactory.get_translator(method, target_language)
     
-    if method in ['Google Translate', 'Bing Translate', 'google', 'bing']:
-        full_description = f'{info_message}\n{text_content}\n'
-        summary_text = translator.translate([{'role': 'user', 'content': full_description}])
-        return {
-            'title': translator.translate([{'role': 'user', 'content': info['title']}]),
-            'author': info['uploader'], 'summary': summary_text, 'language': target_language
-        }
-
-    full_description = f'The following is the full content of the video:\n{info_message}\n{text_content}\nDetailedly Summarize the video in JSON format:\n```json\n{{"title": "", "summary": ""}}\n```'
+    # Batching logic: Groq/LLMs work better with context
+    # We send max 1000 chars (approx 200-300 words), unlimited segments
+    batches = []
+    curr_batch = []
+    curr_chars = 0
     
-    system_prompt = f'You are a expert in the field of this video. Please summary the video in JSON format.\n```json\n{{"title": "the title", "summary": "the summary"}}\n```'
+    for i, seg in enumerate(transcript):
+        text = seg['text']
+        # Reduce batch size to 500 for 8b model stability
+        if curr_batch and (curr_chars + len(text) > 500):
+            batches.append(curr_batch)
+            curr_batch = []
+            curr_chars = 0
+        curr_batch.append({"id": i, "text": text})
+        curr_chars += len(text)
+    if curr_batch:
+        batches.append(curr_batch)
+        
+    all_translations = [None] * len(transcript)
     
-    success = False
-    summary_data = {}
-    for retry in range(5):
-        try:
-            messages = [
-                {'role': 'system', 'content': system_prompt},
-                {'role': 'user', 'content': full_description}
-            ]
-            response = translator.translate(messages)
-            # Find the first JSON-like structure
-            match = re.search(r'\{.*\}', response.replace('\n', ' '), re.DOTALL)
-            if not match: 
-                # Try harder to find JSON if there are backticks
-                if "```json" in response:
-                    json_str = response.split("```json")[-1].split("```")[0].strip()
-                    summary_data = json.loads(json_str)
-                    success = True
-                    break
-                raise Exception("No JSON found")
-            summary_data = json.loads(match.group())
-            success = True
-            break
-        except Exception as e:
-            logger.warning(f'Summarize failed (retry {retry}): {e}')
-            if retry == 4:
-                logger.error(f"Full response from LLM that failed: {response if 'response' in locals() else 'No response'}")
-            time.sleep(1)
-            
-    if not success: 
-        logger.error("Summarization process failed after 5 retries. Using fallback empty summary.")
-        return {
-            'title': info.get('title', 'Unknown'),
-            'author': info.get('uploader', 'Unknown'),
-            'summary': '',
-            'tags': info.get('tags', []),
-            'language': target_language
-        }
-
-    # Translate summary components if not already in target language
-    try:
-        trans_messages = [
-            {'role': 'system', 'content': f'Translate video metadata into {target_language} JSON format.'},
-            {'role': 'user', 'content': f'Title: {summary_data.get("title")}\nSummary: {summary_data.get("summary")}\nTags: {info["tags"]}'}
+    for batch in batches:
+        system_prompt = f"Translate the following subtitles to {target_language}. Context: {summary}. \n" \
+                        f"Rules:\n" \
+                        f"1. Use natural spoken Vietnamese (I='mình', You='các bạn').\n" \
+                        f"2. Return STRICT JSON: {{ \"id\": \"translation\" }}.\n" \
+                        f"3. Maintain original meaning but make it sound like a Vlog."
+        
+        user_content = json.dumps(batch, ensure_ascii=False)
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content}
         ]
-        # Logic to call translator.translate(trans_messages) could go here if needed, 
-        # but for now we follow the existing pattern of returning what we got or defaulting.
-    except:
-        pass
-
-    return {
-        'title': summary_data.get('title', info['title']),
-        'author': info['uploader'],
-        'summary': summary_data.get('summary', ''),
-        'tags': info['tags'],
-        'language': target_language
-    }
-
-def _translate(summary, transcript, target_language='vi', method='LLM'):
-    info = f'Video: "{summary["title"]}". Summary: {summary["summary"]}.'
-    translator = TranslatorFactory.get_translator(method, target_language)
-    
-    method_lower = method.lower()
-    is_google_bing = 'google' in method_lower or 'bing' in method_lower
-    
-    if is_google_bing:
-        # SMART BATCH TRANSLATION (Character-limited)
-        logger.info(f"Using Smart Batch Translation for {method} ({len(transcript)} segments)...")
-        all_texts = [line['text'] for line in transcript]
-        full_translation = []
         
-        # Google typically allows 5k chars, but URL limits or stability suggest 3k
-        max_batch_chars = 3000 
-        separator = "\n[SEP]\n"
-        
-        current_batch = []
-        current_length = 0
-        
-        batches = []
-        for text in all_texts:
-            # If a single sentence is huge, we still gotta send it
-            if current_length + len(text) + len(separator) > max_batch_chars and current_batch:
-                batches.append(current_batch)
-                current_batch = []
-                current_length = 0
-            
-            current_batch.append(text)
-            current_length += len(text) + len(separator)
-            
-        if current_batch:
-            batches.append(current_batch)
-            
-        for i, batch in enumerate(batches):
-            joined_text = separator.join(batch)
-            translated_batch = ""
-            
-            for retry in range(3):
-                try:
-                    # Google/Bing providers expect messages list
-                    messages = [{'role': 'user', 'content': joined_text}]
-                    translated_batch = translator.translate(messages)
-                    if translated_batch:
-                        break
-                except Exception as e:
-                    logger.warning(f"Batch {i} failed (retry {retry}): {e}")
-                    time.sleep(1)
-            
-            if not translated_batch:
-                full_translation.extend([""] * len(batch))
-                continue
-                
-            # Split back using precisely the same separator logic
-            parts = translated_batch.split("[SEP]")
-            parts = [p.strip().replace('[', '').replace(']', '').strip() for p in parts]
-            
-            # Filter out empty strings that might occur due to extra newlines
-            parts = [p for p in parts if p or len(batch) == 1]
-            
-            if len(parts) != len(batch):
-                logger.warning(f"Batch {i} mismatch: In={len(batch)}, Out={len(parts)}. Falling back to one-by-one.")
-                for sub_text in batch:
-                    sub_trans = ""
-                    for r in range(2):
-                        try:
-                            sub_trans = translator.translate([{'role': 'user', 'content': sub_text}])
-                            if sub_trans: break
-                        except: time.sleep(0.3)
-                    full_translation.append(sub_trans)
-            else:
-                full_translation.extend(parts)
-        
-        return [translation_postprocess(t) for t in full_translation]
-
-    # LLM / Sequential Translation
-    fixed_message = [
-        {'role': 'system', 'content': f'You are a language expert. Task: Translate video transcript into {target_language}. Model after: "{summary["title"]}".'}
-    ]
-    
-    history = []
-    full_translation = []
-    for line in transcript:
-        text = line['text']
-        translation = ""
-        for retry in range(5):
-            messages = fixed_message + history[-10:] + [{'role': 'user', 'content': f'Translate:"{text}"'}]
+        response_json = translator.translate(messages)
+        if response_json:
             try:
-                response = translator.translate(messages)
-                translation = response.replace('\n', '')
-                success, translation = valid_translation(text, translation)
-                if not success: raise Exception('Invalid translation')
-                break
+                # Clean response if LLM adds markdown blocks
+                if "```json" in response_json:
+                    response_json = response_json.split("```json")[1].split("```")[0].strip()
+                elif "```" in response_json:
+                    response_json = response_json.split("```")[1].split("```")[0].strip()
+                
+                batch_trans = json.loads(response_json)
+                for item in batch:
+                    idx = item['id']
+                    all_translations[idx] = batch_trans.get(str(idx), item['text'])
             except Exception as e:
-                logger.error(f'Translation error: {e}')
-                time.sleep(0.5)
-        
-        full_translation.append(translation)
-        history.append({'role': 'user', 'content': f'Translate:"{text}"'})
-        history.append({'role': 'assistant', 'content': translation})
-        
-    return full_translation
+                logger.warning(f"Failed to parse batch json. Retrying individually... Error: {e}")
+                # Fallback: Translate individually
+                for item in batch:
+                    try:
+                        s_prompt = f"Translate the following text to {target_language}. Context: {summary}. Return ONLY the translation."
+                        msgs = [{"role": "system", "content": s_prompt}, {"role": "user", "content": item['text']}]
+                        res = translator.translate(msgs)
+                        # clean up valid json wrapper if present even in single mode (unlikely but possible)
+                        if res and "```" in res: res = res.split("```")[-1].strip() 
+                        all_translations[item['id']] = res if res else item['text']
+                    except Exception:
+                         all_translations[item['id']] = item['text']
+        else:
+            logger.warning("Translator returned None for batch. Retrying individually...")
+            for item in batch:
+                try:
+                    s_prompt = f"Translate the following text to {target_language}. Context: {summary}. Return ONLY the translation."
+                    msgs = [{"role": "system", "content": s_prompt}, {"role": "user", "content": item['text']}]
+                    res = translator.translate(msgs)
+                    all_translations[item['id']] = res if res else item['text']
+                except:
+                    all_translations[item['id']] = item['text']
+                
+    return all_translations
+
+def split_sentences(transcript):
+    new_transcript = []
+    for line in transcript:
+        sentences = split_text_into_sentences(line['translation'])
+        if len(sentences) > 1:
+            total_chars = len(line['translation'])
+            curr_start = line['start']
+            duration = line['end'] - line['start']
+            for sent in sentences:
+                sent_dur = (len(sent) / total_chars) * duration
+                new_transcript.append({
+                    'start': round(curr_start, 3),
+                    'end': round(curr_start + sent_dur, 3),
+                    'text': line['text'],
+                    'translation': sent,
+                    'speaker': line.get('speaker', 'SPEAKER_00')
+                })
+                curr_start += sent_dur
+        else:
+            new_transcript.append(line)
+    return new_transcript
 
 def translate(method, folder, target_language='vi'):
-    if os.path.exists(os.path.join(folder, 'translation.json')):
-        logger.info(f'Translation already exists in {folder}')
-        return True
-    
-    info_path = os.path.join(folder, 'download.info.json')
-    if os.path.exists(info_path):
-        with open(info_path, 'r', encoding='utf-8') as f:
-            info = get_necessary_info(json.load(f))
-    else:
-        info = {'title': os.path.basename(folder), 'uploader': 'Unknown', 'tags': []}
-        
     transcript_path = os.path.join(folder, 'transcript.json')
-    with open(transcript_path, 'r', encoding='utf-8') as f:
-        transcript = json.load(f)
+    if not os.path.exists(transcript_path):
+        return None, None
+        
+    transcript = json.load(open(transcript_path, 'r', encoding='utf-8'))
+    summary = get_transcript_summary(transcript)
     
-    summary_path = os.path.join(folder, 'summary.json')
-    if os.path.exists(summary_path):
-        summary = json.load(open(summary_path, 'r', encoding='utf-8'))
-    else:
-        summary = summarize(info, transcript, target_language, method)
-        with open(summary_path, 'w', encoding='utf-8') as f:
-            json.dump(summary, f, indent=2, ensure_ascii=False)
+    with open(os.path.join(folder, 'summary.json'), 'w', encoding='utf-8') as f:
+        json.dump(summary, f, indent=2, ensure_ascii=False)
 
     translation = _translate(summary, transcript, target_language, method)
     for i, line in enumerate(transcript):

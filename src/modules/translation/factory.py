@@ -2,6 +2,7 @@ from .providers.ollama import OllamaTranslator
 from .providers.qwen import QwenTranslator
 from .providers.ernie import ErnieTranslator
 from .providers.google import GoogleTranslator
+from .providers.groq_api import GroqTranslator
 from .providers.llm import LocalLLMTranslator
 
 class TranslatorFactory:
@@ -17,6 +18,8 @@ class TranslatorFactory:
             return ErnieTranslator()
         elif 'google' in method_lower:
             return GoogleTranslator(target_language=target_language, server='google')
+        elif 'groq' in method_lower:
+            return GroqTranslator()
         elif 'bing' in method_lower:
             return GoogleTranslator(target_language=target_language, server='bing')
         elif 'llm' in method_lower:
