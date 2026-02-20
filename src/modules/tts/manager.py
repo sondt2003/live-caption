@@ -38,7 +38,7 @@ def adjust_audio_length(wav_path, desired_length, sample_rate=24000, min_speed_f
     wav, sample_rate = librosa.load(target_path, sr=sample_rate)
     return wav[:int(desired_length*sample_rate)], desired_length
 
-def generate_all_wavs_under_folder(folder, method, target_language='vi', voice='vi-VN-HoaiMyNeural', video_volume=1.0):
+def generate_all_wavs_under_folder(folder, method='auto', target_language='vi', voice='vi-VN-HoaiMyNeural', video_volume=1.0):
     transcript_path = os.path.join(folder, 'translation.json')
     output_folder = os.path.join(folder, 'wavs')
     os.makedirs(output_folder, exist_ok=True)
@@ -50,23 +50,47 @@ def generate_all_wavs_under_folder(folder, method, target_language='vi', voice='
     target_language = target_language.lower().replace('tiếng việt', 'vi').replace('简体中文', 'zh-cn')
     
     # Khởi tạo engine TTS từ Factory
-    engine = TTSFactory.get_tts_engine(method)
+    if method is None or method.lower() == 'auto':
+        engine = TTSFactory.get_best_tts_engine(target_language)
+    else:
+        engine = TTSFactory.get_tts_engine(method)
+
     
-    full_wav = np.zeros((0, ))
+    # Collect all tasks for batch processing
+    tasks = []
     for i, line in enumerate(transcript):
         speaker = line['speaker']
         text = preprocess_text(line['translation'], target_language)
         output_path = os.path.join(output_folder, f'{str(i).zfill(4)}.wav')
         
         # Logic tìm kiếm giọng tham chiếu (Reference Audio)
-        vocal_dereverb_wav = os.path.join(folder, 'audio_vocals_dereverb.wav')
-        speaker_wav = vocal_dereverb_wav if os.path.exists(vocal_dereverb_wav) else os.path.join(folder, 'SPEAKER', f'{speaker}.wav')
-        if not os.path.exists(speaker_wav): speaker_wav = os.path.join(folder, 'audio_vocals.wav')
+        # Ưu tiên các file cắt riêng cho từng speaker (ngắn và tập trung hơn)
+        speaker_wav = os.path.join(folder, 'SPEAKER', f'{speaker}.wav')
+        if not os.path.exists(speaker_wav):
+            vocal_dereverb_wav = os.path.join(folder, 'audio_vocals_dereverb.wav')
+            speaker_wav = vocal_dereverb_wav if os.path.exists(vocal_dereverb_wav) else os.path.join(folder, 'audio_vocals.wav')
 
-        # Gọi Engine để tạo âm thanh
-        engine.generate(text, output_path, speaker_wav=speaker_wav, prompt_text=line['text'], target_language=target_language, voice=voice)
+        # VieNeu cloning works better without ref_text if reference is cross-language
+        tasks.append({
+            "text": text,
+            "output_path": output_path,
+            "speaker_wav": speaker_wav,
+            "ref_text": None, # Skip ref_text to avoid alignment issues/token overflow
+            "target_language": target_language,
+            "voice": voice
+        })
 
-        # Căn chỉnh thời gian (Timeline Alignment)
+    # Gọi Engine để tạo âm thanh hàng loạt (Batch Processing)
+    if hasattr(engine, 'generate_batch'):
+        engine.generate_batch(tasks)
+    else:
+        # Fallback for engines that don't support batching
+        for task in tasks:
+            engine.generate(task.pop("text"), task.pop("output_path"), **task)
+
+    full_wav = np.zeros((0, ))
+    for i, line in enumerate(transcript):
+        output_path = os.path.join(output_folder, f'{str(i).zfill(4)}.wav')
         start, end = line['start'], line['end']
         length = end - start
         last_end = len(full_wav)/24000

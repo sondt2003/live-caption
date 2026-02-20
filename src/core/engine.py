@@ -305,7 +305,7 @@ def engine_run(root_folder='outputs', url=None, video_file=None, num_videos=1, r
                   asr_method='WhisperX', whisper_model='large', batch_size=32, diarization=False,
                   whisper_min_speakers=None, whisper_max_speakers=None,
                   translation_method='LLM', translation_target_language='简体中文',
-                  tts_method='xtts', tts_target_language='简体中文', voice=None,
+                  tts_method='auto', tts_target_language='简体中文', voice=None,
                   subtitles=False, speed_up=1.00, fps=30,
                   background_music=None, bgm_volume=0.5, video_volume=1.0, target_resolution='1080p',
                   max_workers=3, max_retries=5, progress_callback=None):

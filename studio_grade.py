@@ -11,15 +11,15 @@ import argparse
 
 def main():
     parser = argparse.ArgumentParser(description="Studio-Grade Pipeline Test")
-    parser.add_argument("--tts_method", type=str, default="edge", help="TTS method (edge, gtts, azure, openai). e.g. EdgeTTS, gTTS")
-    parser.add_argument("--voice", type=str, default=None, help="Voice name (e.g. 'Ngoc', 'Binh'). Leave empty for default.")
+    parser.add_argument("--tts_method", type=str, default="auto", help="TTS method (auto, edge, xtts, azure, openai). 'auto' uses XTTS for supported languages, EdgeTTS otherwise.")
+    parser.add_argument("--voice", type=str, default=None, help="Voice name or speaker_wav path for XTTS cloning.")
     parser.add_argument("--asr_method", type=str, default="WhisperX", choices=['WhisperX', 'FunASR'], help="ASR method")
     parser.add_argument("--hardcode_subtitles", action="store_true", help="Hardcode subtitles into video (slower)")
     parser.add_argument("--video_volume", type=float, default=0.2, help="Background music volume")
     args = parser.parse_args()
 
     # Test video path
-    video_path = "/home/dangson/workspace/live-caption/video/video3.mp4"
+    video_path = "/home/dangson/workspace/live-caption/video/video-3.mp4"
     output_dir = "outputs/studio_grade"
 
     if os.path.exists(output_dir):
@@ -27,7 +27,7 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
 
     print(f"Starting Studio-Grade Pipeline Test (TTS: {args.tts_method}, ASR: {args.asr_method})...")
-    status, output_video = engine_run(
+    msg, output_video = engine_run(
         root_folder=output_dir,          # Thư mục gốc lưu trữ kết quả (outputs/studio_grade)
         url=None,                         # URL video (YouTube/Bilibili), set None nếu dùng file video cục bộ
         video_file=video_path,            # Đường dẫn tới file video cục bộ
@@ -59,7 +59,9 @@ def main():
         video_volume=args.video_volume
     )
 
-    print(f"Test Status: {status}")
+    print(f"Test Status: {msg}")
+    if "thành công" not in msg.lower():
+        print(f"Error Message: {output_video}") 
     print(f"Final Video: {output_video}")
 
 if __name__ == "__main__":
