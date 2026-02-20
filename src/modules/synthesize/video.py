@@ -232,10 +232,20 @@ def synthesize_video(folder, subtitles=True, speed_up=1.00, fps=30, resolution='
 
             # Construct filter_complex
             v_parts = []
+            total_duration = video_info.get('duration', 0)
             for i, seg in enumerate(segments):
                 # Hiển thị log chi tiết để debug
                 logger.debug(f"Segment {i} ({seg['type']}): {seg['start']:.2f}s -> {seg['end']:.2f}s, PTS={seg['pts']:.4f}")
-                v_parts.append(f"[0:v]trim=start={seg['start']}:end={seg['end']},setpts={seg['pts']}*(PTS-STARTPTS)[v{i}]")
+                
+                # CỦNG CỐ: Đảm bảo start/end không vượt quá video gốc
+                safe_start = min(seg['start'], total_duration - 0.1)
+                safe_end = min(seg['end'], total_duration)
+                if safe_start >= safe_end:
+                    # Nếu segment nằm hoàn toàn ngoài vùng video, ta lấy khung hình cuối cùng
+                    safe_start = max(0, total_duration - 0.1)
+                    safe_end = total_duration
+                
+                v_parts.append(f"[0:v]trim=start={safe_start}:end={safe_end},setpts={seg['pts']}*(PTS-STARTPTS)[v{i}]")
             
             filter_complex = ";".join(v_parts) + ";" + "".join([f"[v{i}]" for i in range(len(v_parts))]) + f"concat=n={len(v_parts)}:v=1[v_synced]"
             v_map = "[v_synced]"

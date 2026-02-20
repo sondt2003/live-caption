@@ -19,7 +19,7 @@ def main():
     args = parser.parse_args()
 
     # Test video path
-    video_path = "/home/dangson/workspace/live-caption/video/video-3.mp4"
+    video_path = "/home/dangson/workspace/live-caption/video/video-5.mp4"
     output_dir = "outputs/studio_grade"
 
     if os.path.exists(output_dir):

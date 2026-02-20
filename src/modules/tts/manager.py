@@ -33,7 +33,6 @@ def adjust_audio_length(wav_path, desired_length, sample_rate=24000, min_speed_f
         return np.zeros((int(desired_length * sample_rate), )), desired_length
     
     speed_factor = max(min(desired_length / current_length, max_speed_factor), min_speed_factor)
-    print(f"DEBUG ADJUST: cur={current_length:.3f}, target={desired_length:.3f} -> ratio={speed_factor:.3f}")
     
     target_path = wav_path.replace('.wav', '_adjusted.wav').replace('.mp3', '_adjusted.wav')
     stretch_audio(wav_path, target_path, ratio=speed_factor, sample_rate=sample_rate)
@@ -145,11 +144,8 @@ def generate_all_wavs_under_folder(folder, method='auto', target_language='vi', 
             available_dur = max(0.5, (orig_end * MAX_PTS_FACTOR) - target_start)
             stretch_to = min(stretch_to_raw, available_dur)
             
-            print(f"DEBUG SYNC [{i}]: orig_dur={orig_dur:.3f}, raw_dur={raw_dur:.3f}, max_dur_allowed={max_dur_allowed:.3f}, available={available_dur:.3f} -> stretch_to={stretch_to:.3f}")
-
             # Thực hiện co giãn audio
             wav, adjusted_len = adjust_audio_length(output_path, stretch_to)
-            print(f"DEBUG SYNC [{i}]: final_len={adjusted_len:.3f}")
             line['source_duration'] = orig_dur
         else:
             logger.warning(f"Segment {i}: Output path {output_path} not found. Filling with silence.")
@@ -182,8 +178,8 @@ def generate_all_wavs_under_folder(folder, method='auto', target_language='vi', 
     
     # Dọn dẹp các tệp tạm để tiết kiệm không gian
     try:
-        # shutil.rmtree(output_folder)
-        logger.info(f"Đã tạm dừng dọn dẹp thư mục tệp tạm TTS để debug: {output_folder}")
+        shutil.rmtree(output_folder)
+        logger.info(f"Đã dọn dẹp thư mục tệp tạm TTS: {output_folder}")
     except Exception as e:
         logger.warning(f"Không thể dọn dẹp thư mục tệp tạm TTS: {e}")
     
@@ -191,9 +187,14 @@ def generate_all_wavs_under_folder(folder, method='auto', target_language='vi', 
     instr_path = os.path.join(folder, 'audio_instruments.wav')
     if os.path.exists(instr_path):
         instr, _ = librosa.load(instr_path, sr=24000)
-        min_len = min(len(full_wav), len(instr))
-        # Áp dụng video_volume để giảm tiếng gốc nếu cần
-        combined = full_wav[:min_len] + instr[:min_len] * video_volume
+        
+        # ĐỒNG BỘ ĐỘ DÀI: Đảm bảo nhạc nền dài bằng âm thanh TTS (padding silence nếu cần)
+        if len(instr) < len(full_wav):
+            padding = np.zeros(len(full_wav) - len(instr))
+            instr = np.concatenate([instr, padding])
+        
+        # Áp dụng video_volume cho nhạc nền, full_wav là giọng nói (giữ nguyên độ lớn)
+        combined = full_wav + instr[:len(full_wav)] * video_volume
         save_wav_norm(combined, os.path.join(folder, 'audio_combined.wav'))
     else:
         shutil.copy(os.path.join(folder, 'audio_tts.wav'), os.path.join(folder, 'audio_combined.wav'))
