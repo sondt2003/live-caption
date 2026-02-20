@@ -23,20 +23,28 @@ def preprocess_text(text, target_language='vi'):
         text = re.sub(r'\s+', ' ', text).strip()
     return text
 
-def adjust_audio_length(wav_path, desired_length, sample_rate=24000, min_speed_factor=0.6, max_speed_factor=1.1):
+def adjust_audio_length(wav_path, desired_length, sample_rate=24000, min_speed_factor=0.6, max_speed_factor=1.2):
     try:
-        wav, sample_rate = librosa.load(wav_path, sr=sample_rate)
+        # Load to check length
+        wav_orig, _ = librosa.load(wav_path, sr=sample_rate)
+        current_length = len(wav_orig)/sample_rate
     except Exception as e:
         logger.warning(f"Audio load failed, returning silence: {e}")
         return np.zeros((int(desired_length * sample_rate), )), desired_length
     
-    current_length = len(wav)/sample_rate
+    # Calculate speed factor: ratio = target / source
+    # If ratio < 1.0 -> speed up
+    # If ratio > 1.0 -> slow down
     speed_factor = max(min(desired_length / current_length, max_speed_factor), min_speed_factor)
     
     target_path = wav_path.replace('.wav', '_adjusted.wav').replace('.mp3', '_adjusted.wav')
     stretch_audio(wav_path, target_path, ratio=speed_factor, sample_rate=sample_rate)
-    wav, sample_rate = librosa.load(target_path, sr=sample_rate)
-    return wav[:int(desired_length*sample_rate)], desired_length
+    
+    # Load the actual stretched audio
+    wav, _ = librosa.load(target_path, sr=sample_rate)
+    actual_duration = len(wav) / sample_rate
+    
+    return wav, actual_duration
 
 def generate_all_wavs_under_folder(folder, method='auto', target_language='vi', voice='vi-VN-HoaiMyNeural', video_volume=1.0):
     transcript_path = os.path.join(folder, 'translation.json')
@@ -92,6 +100,10 @@ def generate_all_wavs_under_folder(folder, method='auto', target_language='vi', 
     for i, line in enumerate(transcript):
         output_path = os.path.join(output_folder, f'{str(i).zfill(4)}.wav')
         start, end = line['start'], line['end']
+        # Backup original timings for visual sync
+        line['original_start'] = start
+        line['original_end'] = end
+        
         length = end - start
         last_end = len(full_wav)/24000
         
@@ -103,14 +115,21 @@ def generate_all_wavs_under_folder(folder, method='auto', target_language='vi', 
         line['start'] = current_start
         
         if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            # Preserve source duration for video synchronization
+            line['source_duration'] = length
             # Điều chỉnh độ dài âm thanh để khớp với Timeline
             wav, adjusted_len = adjust_audio_length(output_path, length)
         else:
+            line['source_duration'] = length
             wav = np.zeros((int(length * 24000), ))
             adjusted_len = length
 
         full_wav = np.concatenate((full_wav, wav))
         line['end'] = current_start + adjusted_len
+
+    # Lưu lại transcript đã cập nhật với thông tin đồng bộ thích ứng
+    with open(transcript_path, 'w', encoding='utf-8') as f:
+        json.dump(transcript, f, ensure_ascii=False, indent=2)
 
     # Xử lý âm thanh hậu kỳ (Mastering)
     logger.info("Đang xử lý âm thanh hậu kỳ (Studio-Grade Mastering)...")

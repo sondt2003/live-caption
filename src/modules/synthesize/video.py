@@ -83,9 +83,9 @@ def generate_srt(translation, srt_path, speed_up=1, max_line_char=30):
 
 
 def get_video_info(video_path):
-    """Lấy thông số video: width, height, fps."""
+    """Lấy thông số video: width, height, fps, duration."""
     command = ['ffprobe', '-v', 'error', '-select_streams', 'v:0',
-               '-show_entries', 'stream=width,height,r_frame_rate', '-of', 'json', video_path]
+               '-show_entries', 'stream=width,height,r_frame_rate,duration', '-of', 'json', video_path]
     result = subprocess.run(command, capture_output=True, text=True)
     data = json.loads(result.stdout)['streams'][0]
     
@@ -96,7 +96,8 @@ def get_video_info(video_path):
     return {
         'width': data['width'],
         'height': data['height'],
-        'fps': fps
+        'fps': fps,
+        'duration': float(data.get('duration', 0))
     }
 
 
@@ -169,60 +170,100 @@ def synthesize_video(folder, subtitles=True, speed_up=1.00, fps=30, resolution='
             '-y'
         ]
     else:
-        logger.info("Bắt đầu tổng hợp video với Encoding đơn luồng (Single-pass)...")
-        # Video filters
-        v_filters = []
-        if speed_up != 1.0:
-            v_filters.append(f"setpts=PTS/{speed_up}")
+        logger.info("Bắt đầu tổng hợp video với cơ chế Adaptive Sync...")
+        
+        # Kiểm tra metadata đồng bộ thích ứng
+        is_adaptive = all(k in translation[0] for k in ['original_start', 'original_end']) if translation else False
+        
+        if is_adaptive:
+            logger.info("Phát hiện dữ liệu đồng bộ thích ứng. Đang tính toán timeline video...")
+            segments = []
+            last_orig_end = 0.0
+            last_target_end = 0.0
             
-        # Hardcode phụ đề nếu bật
+            for i, line in enumerate(translation):
+                orig_start = line['original_start']
+                orig_end = line['original_end']
+                target_start = line['start']
+                target_end = line['end']
+                
+                # Gap processing
+                if orig_start > last_orig_end:
+                    gap_orig_dur = orig_start - last_orig_end
+                    gap_target_dur = target_start - last_target_end
+                    if gap_target_dur > 0 and gap_orig_dur > 0:
+                        pts = gap_target_dur / gap_orig_dur
+                        segments.append({'start': last_orig_end, 'end': orig_start, 'pts': pts})
+                
+                # Speech segment processing
+                seg_orig_dur = orig_end - orig_start
+                seg_target_dur = target_end - target_start
+                if seg_orig_dur > 0:
+                    pts = seg_target_dur / seg_orig_dur
+                    segments.append({'start': orig_start, 'end': orig_end, 'pts': pts})
+                
+                last_orig_end = orig_end
+                last_target_end = target_end
+
+            # 3. Xử lý đoạn kết (tail) nếu còn dư video gốc
+            total_duration = video_info.get('duration', 0)
+            if total_duration > last_orig_end:
+                segments.append({'start': last_orig_end, 'end': total_duration, 'pts': 1.0})
+
+            # Construct filter_complex
+            v_parts = []
+            for i, seg in enumerate(segments):
+                v_parts.append(f"[0:v]trim=start={seg['start']}:end={seg['end']},setpts={seg['pts']}*PTS-STARTPTS[v{i}]")
+            
+            filter_complex = "".join(v_parts) + "".join([f"[v{i}]" for i in range(len(v_parts))]) + f"concat=n={len(v_parts)}:v=1[v_synced]"
+            v_map = "[v_synced]"
+        else:
+            # Fallback to global speed_up
+            v_filters = []
+            if speed_up != 1.0:
+                v_filters.append(f"setpts=PTS/{speed_up}")
+            
+            if v_filters:
+                filter_complex = f"[0:v]{','.join(v_filters)}[v_processed]"
+                v_map = "[v_processed]"
+            else:
+                filter_complex = ""
+                v_map = "0:v"
+
+        # Hardcode subtitles
         if subtitles:
             font_size = int(target_w/128)
             outline = int(round(font_size/8))
             style = f"FontName=SimHei,FontSize={font_size},PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline={outline},WrapStyle=2"
-            v_filters.append(f"subtitles='{srt_path_ffmpeg}':force_style='{style}'")
+            new_v_map = "[v_with_sub]"
+            if filter_complex:
+                filter_complex += f";{v_map}subtitles='{srt_path_ffmpeg}':force_style='{style}'{new_v_map}"
+            else:
+                filter_complex = f"[0:v]subtitles='{srt_path_ffmpeg}':force_style='{style}'{new_v_map}"
+            v_map = new_v_map
 
         # Watermark
         input_args = ['-i', input_video, '-i', input_audio]
-        filter_complex = ""
-        
         if watermark_path and os.path.exists(watermark_path):
             input_args.extend(['-i', watermark_path])
-            base_v = "[0:v]"
-            if v_filters:
-                filter_complex += f"[0:v]{','.join(v_filters)}[v_processed];"
-                base_v = "[v_processed]"
-            
-            filter_complex += f"[2:v]scale=iw*0.15:ih*0.15[wm];{base_v}[wm]overlay=W-w-10:H-h-10[v_out]"
+            base_v = v_map
+            filter_complex += f";[2:v]scale=iw*0.15:ih*0.15[wm];{base_v}[wm]overlay=W-w-10:H-h-10[v_out]"
             v_map = "[v_out]"
-        else:
-            if v_filters:
-                filter_complex += f"[0:v]{','.join(v_filters)}[v_out]"
-                v_map = "[v_out]"
-            else:
-                v_map = "0:v"
 
-        # Audio filter
-        a_filter = f"[1:a]atempo={speed_up}[a_out]"
-        if filter_complex:
-            filter_complex += f";{a_filter}"
-        else:
-            filter_complex = a_filter
-        
         ffmpeg_command = [
             'ffmpeg',
             *input_args,
             '-filter_complex', filter_complex,
             '-map', v_map,
-            '-map', '[a_out]',
+            '-map', '1:a:0',
             '-r', str(fps),
             '-s', resolution_str,
             '-c:v', 'libx264',
             '-c:a', 'aac',
-            '-preset', 'veryfast', # Tăng tốc độ encode
+            '-preset', 'veryfast',
             final_video,
             '-y',
-            '-threads', '0', # Sử dụng toàn bộ core CPU
+            '-threads', '0',
         ]
 
     subprocess.run(ffmpeg_command)

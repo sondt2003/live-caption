@@ -144,15 +144,15 @@ def separate_audio(folder: str, model_name: str = "htdemucs_ft", device: str = '
         # instruments = drums + bass + other
         instruments = (separated['drums'] + separated['bass'] + separated['other']).numpy().T
 
-        save_wav(vocals, vocal_output_path, sample_rate=44100)
+        save_wav(vocals, vocal_output_path, sample_rate=48000)
         logger.info(f'已保存人声: {vocal_output_path}')
 
-        save_wav(instruments, instruments_output_path, sample_rate=44100)
+        save_wav(instruments, instruments_output_path, sample_rate=48000)
         logger.info(f'已保存伴奏 (Drums+Bass+Other): {instruments_output_path}')
         
-        save_wav(drums, drums_output_path, sample_rate=44100)
-        save_wav(bass, bass_output_path, sample_rate=44100)
-        save_wav(other, other_output_path, sample_rate=44100)
+        save_wav(drums, drums_output_path, sample_rate=48000)
+        save_wav(bass, bass_output_path, sample_rate=48000)
+        save_wav(other, other_output_path, sample_rate=48000)
         logger.info(f'已保存4-stem详细音频: drums, bass, other')
 
         return vocal_output_path, instruments_output_path
@@ -178,7 +178,7 @@ def extract_audio_from_video(folder: str) -> bool:
     logger.info(f'正在从视频提取音频: {folder}')
 
     os.system(
-        f'ffmpeg -loglevel error -i "{video_path}" -vn -acodec pcm_s16le -ar 44100 -ac 2 "{audio_path}"')
+        f'ffmpeg -loglevel error -i "{video_path}" -vn -acodec pcm_s16le -ar 48000 -ac 2 "{audio_path}"')
 
     time.sleep(1)
     logger.info(f'音频提取完成: {folder}')
