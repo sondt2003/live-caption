@@ -56,7 +56,8 @@ videos/
 compare_results/
 temp/
 tmp/
-output/
+output*/
+envs/
 *.log
 server_log.txt
 *.mp4
