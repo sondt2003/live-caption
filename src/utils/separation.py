@@ -135,12 +135,8 @@ def separate_audio(folder: str, model_name: str = "htdemucs_ft", device: str = '
         t_end = time.time()
         logger.info(f'音频分离完成，用时 {t_end - t_start:.2f} 秒')
 
-        # Save individual stems
+        # Save primary stems only
         vocals = separated['vocals'].numpy().T
-        drums = separated['drums'].numpy().T
-        bass = separated['bass'].numpy().T
-        other = separated['other'].numpy().T
-        
         # instruments = drums + bass + other
         instruments = (separated['drums'] + separated['bass'] + separated['other']).numpy().T
 
@@ -148,12 +144,14 @@ def separate_audio(folder: str, model_name: str = "htdemucs_ft", device: str = '
         logger.info(f'已保存人声: {vocal_output_path}')
 
         save_wav(instruments, instruments_output_path, sample_rate=48000)
-        logger.info(f'已保存伴奏 (Drums+Bass+Other): {instruments_output_path}')
+        logger.info(f'已保存伴奏: {instruments_output_path}')
         
-        save_wav(drums, drums_output_path, sample_rate=48000)
-        save_wav(bass, bass_output_path, sample_rate=48000)
-        save_wav(other, other_output_path, sample_rate=48000)
-        logger.info(f'已保存4-stem详细音频: drums, bass, other')
+        # Clean up source audio to save space
+        try:
+            os.remove(audio_path)
+            logger.info(f'已删除原始音频以节省空间: {audio_path}')
+        except Exception as e:
+            logger.warning(f'删除原始音频失败: {e}')
 
         return vocal_output_path, instruments_output_path
 
@@ -164,18 +162,22 @@ def separate_audio(folder: str, model_name: str = "htdemucs_ft", device: str = '
         raise
 
 
-def extract_audio_from_video(folder: str) -> bool:
+def extract_audio_from_video(folder: str, video_path: str = None) -> bool:
     """
-    从视频中提取音频
+    Từ video trích xuất âm thanh. Nếu video_path không được cung cấp, mặc định tìm download.mp4 trong folder.
     """
-    video_path = os.path.join(folder, 'download.mp4')
+    if video_path is None:
+        video_path = os.path.join(folder, 'download.mp4')
+        
     if not os.path.exists(video_path):
+        logger.error(f"Không tìm thấy video để trích xuất âm thanh: {video_path}")
         return False
+        
     audio_path = os.path.join(folder, 'audio.wav')
     if os.path.exists(audio_path):
         logger.info(f'音频已提取: {folder}')
         return True
-    logger.info(f'正在从视频提取音频: {folder}')
+    logger.info(f'正在从视频提取音频: {video_path} -> {audio_path}')
 
     os.system(
         f'ffmpeg -loglevel error -i "{video_path}" -vn -acodec pcm_s16le -ar 48000 -ac 2 "{audio_path}"')
@@ -186,19 +188,35 @@ def extract_audio_from_video(folder: str) -> bool:
 
 
 def separate_all_audio_under_folder(root_folder: str, model_name: str = "htdemucs_ft", device: str = 'auto',
-                                    progress: bool = True, shifts: int = 5) -> None:
+                                    progress: bool = True, shifts: int = 5, video_path: str = None) -> None:
     """
-    分离文件夹下所有音频
+    分离文件夹下所有音频. 
+    Nếu video_path được cung cấp, nó sẽ ưu tiên dùng video_path đó cho root_folder.
     """
     global separator
     vocal_output_path, instruments_output_path = None, None
 
     try:
+        # 1. Trường hợp có video_path cụ thể cho folder này
+        if video_path and os.path.exists(video_path):
+            if 'audio_vocals.wav' not in os.listdir(root_folder):
+                extract_audio_from_video(root_folder, video_path)
+                vocal_output_path, instruments_output_path = separate_audio(root_folder, model_name, device, progress, shifts)
+            else:
+                vocal_output_path = os.path.join(root_folder, 'audio_vocals.wav')
+                instruments_output_path = os.path.join(root_folder, 'audio_instruments.wav')
+            return f'音频分离完成: {root_folder}', vocal_output_path, instruments_output_path
+
+        # 2. Trường hợp duyệt folder (tương thích ngược)
         for subdir, dirs, files in os.walk(root_folder):
-            if 'download.mp4' not in files:
+            if 'download.mp4' not in files and not video_path:
                 continue
+            
+            # Ưu tiên dùng video_path nếu có, nếu không tìm download.mp4
+            current_video = video_path if video_path else os.path.join(subdir, 'download.mp4')
+            
             if 'audio.wav' not in files:
-                extract_audio_from_video(subdir)
+                extract_audio_from_video(subdir, current_video)
             if 'audio_vocals.wav' not in files:
                 vocal_output_path, instruments_output_path = separate_audio(subdir, model_name, device, progress,
                                                                             shifts)

@@ -141,11 +141,7 @@ def process_video(video_file, root_folder, resolution,
             if not os.path.exists(folder):
                 os.makedirs(folder)
             
-            target_video = os.path.join(folder, 'download.mp4')
-            if not os.path.exists(target_video):
-                shutil.copy(video_file, target_video)
-            
-            logger.info(f'Đang xử lý video: {folder}')
+            logger.info(f'Đang xử lý video từ nguồn: {video_file} (Thư mục làm việc: {folder})')
 
             # Cập nhật tiến độ sau khi chuẩn bị xong file
             current_stage += 1
@@ -158,8 +154,9 @@ def process_video(video_file, root_folder, resolution,
             if tracker: tracker.start_stage("Separation")
 
             try:
+                # Chuyền video_file gốc vào để tránh copy
                 status, vocals_path, _ = separate_all_audio_under_folder(
-                    folder, model_name=demucs_model, device=device, progress=True, shifts=shifts)
+                    folder, model_name=demucs_model, device=device, progress=True, shifts=shifts, video_path=video_file)
                 logger.info(f'Tách tiếng hoàn tất: {vocals_path}')
                 
                 # Giải phóng VRAM của Demucs
@@ -270,7 +267,7 @@ def process_video(video_file, root_folder, resolution,
             try:
                 status, output_video = synthesize_all_video_under_folder(
                     folder, subtitles=subtitles, speed_up=speed_up, fps=fps, resolution=target_resolution,
-                    background_music=background_music, bgm_volume=bgm_volume, video_volume=video_volume)
+                    background_music=background_music, bgm_volume=bgm_volume, video_volume=video_volume, original_video_path=video_file)
                 logger.info(f'Tổng hợp video hoàn tất: {output_video}')
                 if tracker: tracker.end_stage("Synthesis")
             except Exception as e:
@@ -286,6 +283,25 @@ def process_video(video_file, root_folder, resolution,
             if tracker:
                 tracker.finalize()
                 tracker.save_stats(os.path.join(folder, "timing_stats.json"))
+            
+            # Dọn dẹp siêu sạch (Ultra-Clean Cleanup) sau khi thành công
+            logger.info("Đang thực hiện dọn dẹp các tệp trung gian... (Tạm vô hiệu hóa để debug)")
+            # clean_files = [
+            #     'audio_vocals.wav', 'audio_vocals_dereverb.wav',
+            #     'audio_instruments.wav', 'audio_tts.wav', 'audio_combined.wav',
+            #     'transcript.json', 'summary.json', 'timing_stats.json'
+            # ]
+            # for f in clean_files:
+            #     fpath = os.path.join(folder, f)
+            #     if os.path.exists(fpath):
+            #         os.remove(fpath)
+            
+            # Xóa thư mục SPEAKER nếu có
+            # speaker_dir = os.path.join(folder, 'SPEAKER')
+            # if os.path.exists(speaker_dir):
+            #     shutil.rmtree(speaker_dir)
+            
+            logger.info("Dọn dẹp hoàn tất. Chỉ giữ lại Video, Subtitles và Translation JSON.")
                 
             return True, output_video, "Xử lý thành công"
         except Exception as e:

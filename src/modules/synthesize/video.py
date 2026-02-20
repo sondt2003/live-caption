@@ -115,12 +115,13 @@ def convert_resolution(aspect_ratio, resolution='1080p'):
     
     return width, height
     
-def synthesize_video(folder, subtitles=True, speed_up=1.00, fps=30, resolution='1080p', background_music=None, watermark_path=None, bgm_volume=0.5, video_volume=1.0):
+def synthesize_video(folder, subtitles=True, speed_up=1.00, fps=30, resolution='1080p', background_music=None, watermark_path=None, bgm_volume=0.5, video_volume=1.0, input_video=None):
     """Tổng hợp âm thanh, video và phụ đề hoàn chỉnh trong 1 pass duy nhất."""
     
     translation_path = os.path.join(folder, 'translation.json')
     input_audio = os.path.join(folder, 'audio_combined.wav')
-    input_video = os.path.join(folder, 'download.mp4')
+    if input_video is None:
+        input_video = os.path.join(folder, 'download.mp4')
     
     if not os.path.exists(translation_path) or not os.path.exists(input_audio):
         logger.warning(f"Thiếu file translation.json hoặc audio_combined.wav tại {folder}")
@@ -146,14 +147,18 @@ def synthesize_video(folder, subtitles=True, speed_up=1.00, fps=30, resolution='
     target_w, target_h = convert_resolution(aspect_ratio, resolution)
     resolution_str = f'{target_w}x{target_h}'
     
+    # Kiểm tra metadata đồng bộ thích ứng
+    is_adaptive = all(k in translation[0] for k in ['original_start', 'original_end']) if translation else False
+    
     # Kiểm tra xem có thể dùng Stream Copy không?
-    # Điều kiện: Không phụ đề, không watermark, không đổi speed, không đổi độ phân giải/fps
+    # Nếu có is_adaptive, ta BUỘC phải re-encode video để thay đổi PTS từng phần
     can_stream_copy = (not subtitles and 
                        not watermark_path and 
                        speed_up == 1.0 and 
                        orig_w == target_w and 
                        orig_h == target_h and 
-                       abs(video_info['fps'] - fps) < 0.1)
+                       abs(video_info['fps'] - fps) < 0.1 and
+                       not is_adaptive)
 
     if can_stream_copy:
         logger.info("Phát hiện các thông số khớp nhau. Sử dụng Stream Copy để tổng hợp siêu tốc...")
@@ -172,50 +177,67 @@ def synthesize_video(folder, subtitles=True, speed_up=1.00, fps=30, resolution='
     else:
         logger.info("Bắt đầu tổng hợp video với cơ chế Adaptive Sync...")
         
-        # Kiểm tra metadata đồng bộ thích ứng
-        is_adaptive = all(k in translation[0] for k in ['original_start', 'original_end']) if translation else False
-        
         if is_adaptive:
             logger.info("Phát hiện dữ liệu đồng bộ thích ứng. Đang tính toán timeline video...")
             segments = []
             last_orig_end = 0.0
             last_target_end = 0.0
+            # Cấu hình ngưỡng cân bằng: Đồng nhất với TTS
+            MAX_PTS_FACTOR = 1.43 
             
             for i, line in enumerate(translation):
                 orig_start = line['original_start']
                 orig_end = line['original_end']
                 target_start = line['start']
                 target_end = line['end']
+                # Sử dụng độ dài thực tế của file audio đã tạo (đã được nén/giãn trong TTS)
+                actual_dur = line.get('duration', target_end - target_start)
                 
-                # Gap processing
+                # 1. Xử lý khoảng lặng (Gaps)
                 if orig_start > last_orig_end:
                     gap_orig_dur = orig_start - last_orig_end
                     gap_target_dur = target_start - last_target_end
-                    if gap_target_dur > 0 and gap_orig_dur > 0:
-                        pts = gap_target_dur / gap_orig_dur
-                        segments.append({'start': last_orig_end, 'end': orig_start, 'pts': pts})
-                
-                # Speech segment processing
+                    if gap_orig_dur > 0:
+                        MIN_GAP_PTS = 0.2
+                        if gap_target_dur <= 0:
+                            pts = MIN_GAP_PTS
+                        else:
+                            pts = gap_target_dur / gap_orig_dur
+                            pts = max(MIN_GAP_PTS, min(pts, MAX_PTS_FACTOR))
+                        segments.append({'start': last_orig_end, 'end': orig_start, 'pts': pts, 'type': 'gap'})
+
+                # 2. Xử lý giọng nói (Speech)
                 seg_orig_dur = orig_end - orig_start
-                seg_target_dur = target_end - target_start
                 if seg_orig_dur > 0:
-                    pts = seg_target_dur / seg_orig_dur
-                    segments.append({'start': orig_start, 'end': orig_end, 'pts': pts})
+                    # KHỚP 1:1 VỚI ĐỘ DÀI ÂM THANH
+                    pts = actual_dur / seg_orig_dur
+                    
+                    if pts > MAX_PTS_FACTOR:
+                        logger.warning(f"Segment {i}: PTS {pts:.2f} vượt giới hạn. Cố định tại {MAX_PTS_FACTOR}.")
+                        pts = MAX_PTS_FACTOR
+                        
+                    segments.append({'start': orig_start, 'end': orig_end, 'pts': pts, 'type': 'speech'})
                 
                 last_orig_end = orig_end
                 last_target_end = target_end
 
-            # 3. Xử lý đoạn kết (tail) nếu còn dư video gốc
+            # 3. Xử lý đoạn kết (tail)
             total_duration = video_info.get('duration', 0)
             if total_duration > last_orig_end:
-                segments.append({'start': last_orig_end, 'end': total_duration, 'pts': 1.0})
+                segments.append({'start': last_orig_end, 'end': total_duration, 'pts': 1.0, 'type': 'tail'})
+
+            # LOG DURATION CHECK
+            final_v_dur = sum([ (s['end'] - s['start']) * s['pts'] for s in segments ])
+            logger.info(f"Dự kiến độ dài video sau đồng bộ: {final_v_dur:.2f}s (Audio: {last_target_end:.2f}s)")
 
             # Construct filter_complex
             v_parts = []
             for i, seg in enumerate(segments):
-                v_parts.append(f"[0:v]trim=start={seg['start']}:end={seg['end']},setpts={seg['pts']}*PTS-STARTPTS[v{i}]")
+                # Hiển thị log chi tiết để debug
+                logger.debug(f"Segment {i} ({seg['type']}): {seg['start']:.2f}s -> {seg['end']:.2f}s, PTS={seg['pts']:.4f}")
+                v_parts.append(f"[0:v]trim=start={seg['start']}:end={seg['end']},setpts={seg['pts']}*(PTS-STARTPTS)[v{i}]")
             
-            filter_complex = "".join(v_parts) + "".join([f"[v{i}]" for i in range(len(v_parts))]) + f"concat=n={len(v_parts)}:v=1[v_synced]"
+            filter_complex = ";".join(v_parts) + ";" + "".join([f"[v{i}]" for i in range(len(v_parts))]) + f"concat=n={len(v_parts)}:v=1[v_synced]"
             v_map = "[v_synced]"
         else:
             # Fallback to global speed_up
@@ -293,10 +315,24 @@ def synthesize_video(folder, subtitles=True, speed_up=1.00, fps=30, resolution='
     return final_video
 
 
-def synthesize_all_video_under_folder(folder, subtitles=True, speed_up=1.00, fps=30, background_music=None, bgm_volume=0.5, video_volume=1.0, resolution='1080p', watermark_path="f_logo.png"):
-    """Duyệt qua các thư mục con và tổng hợp tất cả video tìm thấy."""
+def synthesize_all_video_under_folder(folder, subtitles=True, speed_up=1.00, fps=30, background_music=None, bgm_volume=0.5, video_volume=1.0, resolution='1080p', watermark_path="f_logo.png", original_video_path=None):
+    """
+    Duyệt qua các thư mục con và tổng hợp tất cả video tìm thấy.
+    Nếu original_video_path được cung cấp, nó sẽ ưu tiên dùng video đó cho folder hiện tại.
+    """
     watermark_path = None if not os.path.exists(watermark_path) else watermark_path
     output_video_path = None
+    
+    # 1. Trường hợp có video gốc cụ thể
+    if original_video_path and os.path.exists(original_video_path):
+        output_video_path = synthesize_video(folder, subtitles=subtitles,
+                        speed_up=speed_up, fps=fps, resolution=resolution,
+                        background_music=background_music,
+                        watermark_path=watermark_path, bgm_volume=bgm_volume, video_volume=video_volume,
+                        input_video=original_video_path)
+        return f'Đã tổng hợp video: {folder}', output_video_path
+
+    # 2. Trường hợp duyệt folder (tương thích ngược)
     for root, dirs, files in os.walk(folder):
         if 'download.mp4' in files:
             output_video_path = synthesize_video(root, subtitles=subtitles,

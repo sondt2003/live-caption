@@ -23,7 +23,7 @@ def preprocess_text(text, target_language='vi'):
         text = re.sub(r'\s+', ' ', text).strip()
     return text
 
-def adjust_audio_length(wav_path, desired_length, sample_rate=24000, min_speed_factor=0.6, max_speed_factor=1.2):
+def adjust_audio_length(wav_path, desired_length, sample_rate=24000, min_speed_factor=0.5, max_speed_factor=1.35):
     try:
         # Load to check length
         wav_orig, _ = librosa.load(wav_path, sr=sample_rate)
@@ -32,10 +32,8 @@ def adjust_audio_length(wav_path, desired_length, sample_rate=24000, min_speed_f
         logger.warning(f"Audio load failed, returning silence: {e}")
         return np.zeros((int(desired_length * sample_rate), )), desired_length
     
-    # Calculate speed factor: ratio = target / source
-    # If ratio < 1.0 -> speed up
-    # If ratio > 1.0 -> slow down
     speed_factor = max(min(desired_length / current_length, max_speed_factor), min_speed_factor)
+    print(f"DEBUG ADJUST: cur={current_length:.3f}, target={desired_length:.3f} -> ratio={speed_factor:.3f}")
     
     target_path = wav_path.replace('.wav', '_adjusted.wav').replace('.mp3', '_adjusted.wav')
     stretch_audio(wav_path, target_path, ratio=speed_factor, sample_rate=sample_rate)
@@ -107,25 +105,62 @@ def generate_all_wavs_under_folder(folder, method='auto', target_language='vi', 
         length = end - start
         last_end = len(full_wav)/24000
         
-        if start > last_end:
-            # Thêm khoảng lặng nếu câu tiếp theo bắt đầu muộn hơn câu trước
-            full_wav = np.concatenate((full_wav, np.zeros((int((start - last_end) * 24000), ))))
+    # Timeline Pacing Logic
+    current_out_end = 0.0
+    MIN_GAP = 0.1 # Minimum gap between segments in the output
+    MAX_PTS_FACTOR = 1.43 # Giới hạn giãn video (Must be <= 1.5 to stay natural)
+    
+    for i, line in enumerate(transcript):
+        output_path = os.path.join(output_folder, f'{str(i).zfill(4)}.wav')
+        orig_start = line['original_start']
+        orig_end = line['original_end']
+        orig_dur = orig_end - orig_start
+        
+        # 1. Determine the earliest possible start time
+        # We try to start at the original time, but must follow previous output
+        target_start = max(orig_start, current_out_end + MIN_GAP)
+        
+        # 2. Add silence to reach the target start in the main wav
+        if target_start > current_out_end:
+            full_wav = np.concatenate((full_wav, np.zeros((int((target_start - current_out_end) * 24000), ))))
         
         current_start = len(full_wav)/24000
         line['start'] = current_start
         
         if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-            # Preserve source duration for video synchronization
-            line['source_duration'] = length
-            # Điều chỉnh độ dài âm thanh để khớp với Timeline
-            wav, adjusted_len = adjust_audio_length(output_path, length)
+            # Load raw duration for calculation
+            raw_vox, _ = librosa.load(output_path, sr=24000)
+            raw_dur = len(raw_vox) / 24000
+            
+            # CƠ CHẾ ĐỒNG BỘ CỨNG:
+            # Không được để đoạn audio dài hơn độ giãn video tối đa (1.43x)
+            max_dur_allowed = orig_dur * MAX_PTS_FACTOR
+            
+            # Nếu bản dịch quá dài, ta phải ép nó ngắn lại cho vừa max_dur_allowed
+            # Nếu bản dịch ngắn hơn, ta cố gắng khớp vào orig_dur hoặc available_dur
+            stretch_to_raw = min(max_dur_allowed, max(orig_dur, raw_dur))
+            
+            # Nếu chúng ta đang bị chậm (target_start > orig_start), 
+            # chúng ta có ít "không gian" hơn để giãn video.
+            available_dur = max(0.5, (orig_end * MAX_PTS_FACTOR) - target_start)
+            stretch_to = min(stretch_to_raw, available_dur)
+            
+            print(f"DEBUG SYNC [{i}]: orig_dur={orig_dur:.3f}, raw_dur={raw_dur:.3f}, max_dur_allowed={max_dur_allowed:.3f}, available={available_dur:.3f} -> stretch_to={stretch_to:.3f}")
+
+            # Thực hiện co giãn audio
+            wav, adjusted_len = adjust_audio_length(output_path, stretch_to)
+            print(f"DEBUG SYNC [{i}]: final_len={adjusted_len:.3f}")
+            line['source_duration'] = orig_dur
         else:
-            line['source_duration'] = length
-            wav = np.zeros((int(length * 24000), ))
-            adjusted_len = length
+            logger.warning(f"Segment {i}: Output path {output_path} not found. Filling with silence.")
+            line['source_duration'] = orig_dur
+            wav = np.zeros((int(orig_dur * 24000), ))
+            adjusted_len = orig_dur
 
         full_wav = np.concatenate((full_wav, wav))
         line['end'] = current_start + adjusted_len
+        current_out_end = line['end']
+        line['duration'] = adjusted_len
 
     # Lưu lại transcript đã cập nhật với thông tin đồng bộ thích ứng
     with open(transcript_path, 'w', encoding='utf-8') as f:
@@ -144,6 +179,13 @@ def generate_all_wavs_under_folder(folder, method='auto', target_language='vi', 
         logger.warning(f"Mastering thất bại: {e}")
 
     save_wav(full_wav, os.path.join(folder, 'audio_tts.wav'))
+    
+    # Dọn dẹp các tệp tạm để tiết kiệm không gian
+    try:
+        # shutil.rmtree(output_folder)
+        logger.info(f"Đã tạm dừng dọn dẹp thư mục tệp tạm TTS để debug: {output_folder}")
+    except Exception as e:
+        logger.warning(f"Không thể dọn dẹp thư mục tệp tạm TTS: {e}")
     
     # Trộn với nhạc nền/âm thanh gốc nếu có
     instr_path = os.path.join(folder, 'audio_instruments.wav')
