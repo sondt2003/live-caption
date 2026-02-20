@@ -29,6 +29,7 @@ wheel
 torch==2.5.1
 torchaudio==2.5.1
 torchvision==0.20.1
+onnxruntime==1.24.1
 numpy==1.26.4
 blis==0.7.11
 accelerate

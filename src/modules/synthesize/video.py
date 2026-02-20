@@ -296,31 +296,49 @@ def synthesize_video(folder, subtitles=True, speed_up=1.00, fps=30, resolution='
             final_video,
             '-y',
             '-threads', '0',
+            '-shortest', # Ensure video stops when shortest stream ends (usually video)
         ]
+        
+        # === OPTIMIZATION: Single-Pass Background Music Mixing ===
+        if background_music and os.path.exists(background_music):
+            logger.info(f"Tối ưu hóa: Trộn nhạc nền trong cùng 1 pass FFmpeg từ: {background_music}")
+            
+            # Add background music as a new input (index 2 or 3 depending on watermark)
+            bgm_input_index = len(input_args) // 2 # input_args has '-i', 'path', '-i', 'path'...
+            input_args.extend(['-i', background_music])
+            
+            # Update filter_complex to mix audio
+            # Current map is '1:a:0' (Dubbed Audio). We need to mix it with bgm_input_index:a
+            
+            # Create audio mix filter
+            # [1:a]volume=video_volume[a1];[bgm_idx:a]volume=bgm_volume[a2];[a1][a2]amix=inputs=2:duration=first[a_out]
+            audio_filter = f"[1:a]volume={video_volume}[a_main];[{bgm_input_index}:a]volume={bgm_volume}[a_bgm];[a_main][a_bgm]amix=inputs=2:duration=first[a_out]"
+            
+            # Prepend audio filter to existing complex filter (to keep it organized, though order doesn't strictly matter if labels are unique)
+            if filter_complex:
+                filter_complex += f";{audio_filter}"
+            else:
+                filter_complex = audio_filter
+                
+            # Update output map to use the mixed audio
+            ffmpeg_command = [
+                'ffmpeg',
+                *input_args,
+                '-filter_complex', filter_complex,
+                '-map', v_map,
+                '-map', '[a_out]', # Use the mixed audio stream
+                '-r', str(fps),
+                '-s', resolution_str,
+                '-c:v', 'libx264',
+                '-c:a', 'aac',
+                '-preset', 'veryfast',
+                final_video,
+                '-y',
+                '-threads', '0',
+            ]
 
     subprocess.run(ffmpeg_command)
     time.sleep(1)
-
-    # Thêm nhạc nền (Single-pass master mixing)
-    if background_music and os.path.exists(background_music):
-        logger.info(f"Đang trộn nhạc nền từ: {background_music}")
-        final_video_with_bgm = final_video.replace('.mp4', '_bgm.mp4')
-        ffmpeg_command_bgm = [
-            'ffmpeg',
-            '-i', final_video,
-            '-i', background_music,
-            '-filter_complex', f'[0:a]volume={video_volume}[v0];[1:a]volume={bgm_volume}[v1];[v0][v1]amix=inputs=2:duration=first[a]',
-            '-map', '0:v',
-            '-map', '[a]',
-            '-c:v', 'copy', # Copy video stream, tránh re-encode lần 2
-            '-c:a', 'aac',
-            final_video_with_bgm,
-            '-y'
-        ]
-        subprocess.run(ffmpeg_command_bgm)
-        os.remove(final_video)
-        os.rename(final_video_with_bgm, final_video)
-        time.sleep(1)
 
     return final_video
 
