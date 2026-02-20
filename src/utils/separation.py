@@ -28,7 +28,7 @@ def init_demucs():
 
 
 def load_model(model_name: str = "htdemucs_ft", device: str = 'auto', progress: bool = True,
-               shifts: int = 5) -> Separator:
+               shifts: int = 1) -> Separator:
     """
     加载Demucs模型。
     如果相同配置的模型已加载，直接返回现有模型而不重新加载。
@@ -92,7 +92,7 @@ def release_model():
 
 
 def separate_audio(folder: str, model_name: str = "htdemucs_ft", device: str = 'auto', progress: bool = True,
-                   shifts: int = 5) -> None:
+                   shifts: int = 1) -> None:
     """
     分离音频文件
     """
@@ -135,16 +135,26 @@ def separate_audio(folder: str, model_name: str = "htdemucs_ft", device: str = '
         t_end = time.time()
         logger.info(f'音频分离完成，用时 {t_end - t_start:.2f} 秒')
 
-        # Save primary stems only
-        vocals = separated['vocals'].numpy().T
-        # instruments = drums + bass + other
-        instruments = (separated['drums'] + separated['bass'] + separated['other']).numpy().T
+        import torchaudio.functional as F
+        target_sr = 48000
+        demucs_sr = separator.samplerate
 
-        save_wav(vocals, vocal_output_path, sample_rate=48000)
-        logger.info(f'已保存人声: {vocal_output_path}')
+        # Resample to 48kHz for standard studio-grade processing (matches DeepFilterNet)
+        vocals_tensor = separated['vocals']
+        if demucs_sr != target_sr:
+            vocals_tensor = F.resample(vocals_tensor, demucs_sr, target_sr)
+        vocals = vocals_tensor.numpy().T
 
-        save_wav(instruments, instruments_output_path, sample_rate=48000)
-        logger.info(f'已保存伴奏: {instruments_output_path}')
+        instr_tensor = (separated['drums'] + separated['bass'] + separated['other'])
+        if demucs_sr != target_sr:
+            instr_tensor = F.resample(instr_tensor, demucs_sr, target_sr)
+        instruments = instr_tensor.numpy().T
+
+        save_wav(vocals, vocal_output_path, sample_rate=target_sr)
+        logger.info(f'已保存人声: {vocal_output_path} ({target_sr}Hz)')
+
+        save_wav(instruments, instruments_output_path, sample_rate=target_sr)
+        logger.info(f'已保存伴奏: {instruments_output_path} ({target_sr}Hz)')
         
         # Clean up source audio to save space
         try:
@@ -188,7 +198,7 @@ def extract_audio_from_video(folder: str, video_path: str = None) -> bool:
 
 
 def separate_all_audio_under_folder(root_folder: str, model_name: str = "htdemucs_ft", device: str = 'auto',
-                                    progress: bool = True, shifts: int = 5, video_path: str = None) -> None:
+                                    progress: bool = True, shifts: int = 1, video_path: str = None) -> None:
     """
     分离文件夹下所有音频. 
     Nếu video_path được cung cấp, nó sẽ ưu tiên dùng video_path đó cho root_folder.

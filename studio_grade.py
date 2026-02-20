@@ -16,6 +16,7 @@ def main():
     parser.add_argument("--asr_method", type=str, default="WhisperX", choices=['WhisperX', 'FunASR'], help="ASR method")
     parser.add_argument("--hardcode_subtitles", action="store_true", help="Hardcode subtitles into video (slower)")
     parser.add_argument("--video_volume", type=float, default=0.2, help="Background music volume")
+    parser.add_argument("--shifts", type=int, default=1, help="Demucs shifts (default 1 for speed, increase for quality)")
     args = parser.parse_args()
 
     # Test video path
@@ -41,6 +42,7 @@ def main():
         tts_method=args.tts_method,
         voice=args.voice,
         subtitles=args.hardcode_subtitles,
+        shifts=args.shifts,
         
         # Phương pháp ASR (Nhận diện giọng nói): 'WhisperX', 'FunASR'
         asr_method=args.asr_method,            

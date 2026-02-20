@@ -317,7 +317,7 @@ def process_video(video_file, root_folder, resolution,
 
 
 def engine_run(root_folder='outputs', url=None, video_file=None, num_videos=1, resolution='1080p',
-                  demucs_model='htdemucs_ft', device='auto', shifts=5,
+                  demucs_model='htdemucs_ft', device='auto', shifts=1,
                   asr_method='WhisperX', whisper_model='large', batch_size=32, diarization=False,
                   whisper_min_speakers=None, whisper_max_speakers=None,
                   translation_method='LLM', translation_target_language='简体中文',
