@@ -4,13 +4,13 @@ import numpy as np
 from scipy.io import wavfile
 
 def sanitize_filename(filename: str) -> str:
-    # Define a set of valid characters
+    # Định nghĩa tập hợp các ký tự hợp lệ
     valid_chars = "-_.() %s%s" % (string.ascii_letters, string.digits)
 
-    # Keep only valid characters
+    # Chỉ giữ lại các ký tự hợp lệ
     sanitized_filename = ''.join(c for c in filename if c in valid_chars)
 
-    # Replace multiple spaces with a single space
+    # Thay thế nhiều khoảng trắng bằng một khoảng trắng
     sanitized_filename = re.sub(' +', ' ', sanitized_filename)
 
     return sanitized_filename

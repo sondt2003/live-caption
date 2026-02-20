@@ -5,30 +5,30 @@ from df.enhance import enhance, init_df, load_audio, save_audio
 from loguru import logger
 import time
 
-# Global variables for model state
+# Biến toàn cục cho trạng thái mô hình
 df_model = None
 df_state = None
 
 def init_dereverb():
     """
-    Initialize DeepFilterNet model.
+    Khởi tạo mô hình DeepFilterNet.
     """
     global df_model, df_state
     if df_model is None:
-        logger.info("Initializing DeepFilterNet for dereverb...")
+        logger.info("Đang khởi tạo DeepFilterNet để khử vang...")
         t_start = time.time()
-        # init_df will download the model to ~/.cache/deepfilternet if not present
+        # init_df sẽ tải model về ~/.cache/deepfilternet nếu chưa có
         df_model, df_state, _ = init_df()
         t_end = time.time()
-        logger.info(f"DeepFilterNet initialized in {t_end - t_start:.2f}s")
+        logger.info(f"DeepFilterNet đã được khởi tạo trong {t_end - t_start:.2f}s")
 
 def release_dereverb():
     """
-    Release DeepFilterNet model resources.
+    Giải phóng tài nguyên mô hình DeepFilterNet.
     """
     global df_model, df_state
     if df_model is not None:
-        logger.info("Releasing DeepFilterNet model...")
+        logger.info("Đang giải phóng mô hình DeepFilterNet...")
         df_model = None
         df_state = None
         torch.cuda.empty_cache()
@@ -37,7 +37,7 @@ def release_dereverb():
 
 def dereverb_audio(input_path: str, output_path: str = None):
     """
-    Apply dereverberation to an audio file using DeepFilterNet.
+    Áp dụng khử vang cho file âm thanh bằng DeepFilterNet.
     """
     global df_model, df_state
     
@@ -45,29 +45,29 @@ def dereverb_audio(input_path: str, output_path: str = None):
         output_path = input_path.replace('.wav', '_dereverb.wav')
         
     if os.path.exists(output_path):
-        logger.info(f"Dereverb audio already exists: {output_path}")
+        logger.info(f"Audio đã khử vang tồn tại: {output_path}")
         return output_path
 
     if df_model is None:
         init_dereverb()
 
-    logger.info(f"Applying dereverb to {input_path}...")
+    logger.info(f"Đang khử vang cho {input_path}...")
     t_start = time.time()
     try:
-        # DeepFilterNet expects 48kHz by default for the latest models
+        # DeepFilterNet mặc định mong đợi 48kHz cho các model mới nhất
         audio, _ = load_audio(input_path, sr=df_state.sr())
         enhanced = enhance(df_model, df_state, audio)
         save_audio(output_path, enhanced, df_state.sr())
         t_end = time.time()
-        logger.info(f"Dereverb completed in {t_end - t_start:.2f}s. Saved to {output_path}")
+        logger.info(f"Khử vang hoàn tất trong {t_end - t_start:.2f}s. Đã lưu tại {output_path}")
         return output_path
     except Exception as e:
-        logger.error(f"Dereverb failed: {e}")
-        return input_path # Fallback to original
+        logger.error(f"Khử vang thất bại: {e}")
+        return input_path # Fallback về file gốc
 
 def process_folder_dereverb(folder: str):
     """
-    Dereverb the vocals in a specific folder.
+    Khử vang phần vocal trong một thư mục cụ thể.
     """
     vocal_path = os.path.join(folder, 'audio_vocals.wav')
     if os.path.exists(vocal_path):
@@ -76,7 +76,7 @@ def process_folder_dereverb(folder: str):
     return None
 
 if __name__ == '__main__':
-    # Test on a specific folder if needed
+    # Test trên một thư mục cụ thể nếu cần
     test_folder = "compare_results/temp/video3"
     if os.path.exists(test_folder):
         process_folder_dereverb(test_folder)
