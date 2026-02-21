@@ -59,25 +59,77 @@ def _silero_segments(y: np.ndarray, chunk_size: float, onset: float) -> list:
     merged.append({"start": curr_start, "end": curr_end})
     return merged
 
+def _db_segments(y: np.ndarray, top_db: float, merge_gap: float, min_duration: float, max_chunk: float) -> list:
+    """
+    Split audio using librosa top_db (dB-based VAD) and merge close segments.
+    """
+    import librosa
+    # intervals is [start_sample, end_sample]
+    intervals = librosa.effects.split(y, top_db=top_db)
+    if len(intervals) == 0:
+        return []
+
+    # Convert to seconds
+    raw = [{"start": start / 16000, "end": end / 16000} for start, end in intervals]
+    
+    # Filter by minimum duration
+    raw = [s for s in raw if (s["end"] - s["start"]) >= min_duration]
+    if not raw:
+        return []
+
+    # Merge logic: Merge if gap < merge_gap AND total duration < max_chunk
+    merged = []
+    if raw:
+        curr = raw[0]
+        for next_seg in raw[1:]:
+            gap = next_seg["start"] - curr["end"]
+            can_merge = gap <= merge_gap and (next_seg["end"] - curr["start"]) <= max_chunk
+            
+            if can_merge:
+                curr["end"] = next_seg["end"]
+            else:
+                merged.append(curr)
+                curr = next_seg
+        merged.append(curr)
+
+    # Final pass: If any segment still exceeds max_chunk, force split it
+    final = []
+    for s in merged:
+        start, end = s["start"], s["end"]
+        while (end - start) > max_chunk:
+            final.append({"start": start, "end": start + max_chunk})
+            start += max_chunk
+        if (end - start) > 0.05: # ignore tiny fragments
+            final.append({"start": start, "end": end})
+            
+    return final
+
 
 # ── Transcribe one chunk via Google Speech API v2 ────────────────────────────
 
 def _transcribe_segment(i: int, seg: dict, wav_path: str, duration: float,
                         output_dir: str, lang: str, api_key: str) -> list:
     start, end = seg["start"], seg["end"]
-    chunk_path = os.path.join(output_dir, f".temp_chunk_{i}.wav")
 
     # Extract chunk with small pads to avoid cutting off words
     start_pad = max(0, start - 0.05)
     end_pad = min(duration, end + 0.05)
 
-    subprocess.run(
-        ['ffmpeg', '-y', '-i', wav_path,
-         '-ss', str(start_pad), '-to', str(end_pad),
-         '-ac', '1', '-ar', '16000', '-sample_fmt', 's16', chunk_path],
-        capture_output=True
-    )
-    if not os.path.exists(chunk_path):
+    # Pipe raw PCM s16le directly to stdout
+    cmd = [
+        'ffmpeg', '-y', '-i', wav_path,
+        '-ss', str(start_pad), '-to', str(end_pad),
+        '-ac', '1', '-ar', '16000', '-f', 's16le', 'pipe:1'
+    ]
+    
+    try:
+        process = subprocess.run(cmd, capture_output=True, check=True)
+        pcm = process.stdout
+    except subprocess.CalledProcessError as e:
+        logger.error(f"[ASR Seg {i}] FFmpeg failed: {e.stderr.decode()}")
+        return []
+
+    if not pcm:
         return []
 
     key = api_key if api_key and str(api_key).strip() not in ('', 'None') else _FALLBACK_KEY
@@ -86,8 +138,6 @@ def _transcribe_segment(i: int, seg: dict, wav_path: str, duration: float,
 
     results = []
     try:
-        with wave.open(chunk_path, 'rb') as wf:
-            pcm = wf.readframes(wf.getnframes())
         resp = requests.post(url, headers=headers, data=pcm, timeout=30)
         
         # Google returns multiple JSON lines
@@ -109,10 +159,6 @@ def _transcribe_segment(i: int, seg: dict, wav_path: str, duration: float,
                 pass
     except Exception as e:
         logger.error(f"[ASR Seg {i}] Error: {e}")
-    finally:
-        if os.path.exists(chunk_path):
-            try: os.remove(chunk_path)
-            except: pass
     return results
 
 
@@ -130,17 +176,27 @@ def google_transcribe_audio(wav_path: str, api_key: str, lang: str = 'zh') -> li
         y = librosa.resample(y, orig_sr=sr, target_sr=16000)
     duration = float(len(y)) / 16000
 
-    # Match WhisperX defaults
-    chunk_size  = float(os.getenv('GOOGLE_MAX_CHUNK_SEC', 30))
-    vad_onset   = 0.500
-    max_workers = int(os.getenv('ASR_CONCURRENCY', 5))
+    # Match WhisperX defaults or user overrides from .env
+    chunk_size   = float(os.getenv('GOOGLE_MAX_CHUNK_SEC', 30))
+    vad_onset    = 0.500
+    max_workers  = int(os.getenv('ASR_CONCURRENCY', 5))
+    
+    # Special dB-based VAD parameters
+    vad_db       = os.getenv('GOOGLE_VAD_DB')
+    merge_gap    = float(os.getenv('GOOGLE_ASR_MERGE_GAP', 0.2)) # default 0.2s
+    min_duration = float(os.getenv('GOOGLE_ASR_MIN_DURATION', 0.0))
 
-    # 1. Silero VAD -> merged chunks <= 30s
+    # 1. Choose VAD Strategy
     try:
-        chunks = _silero_segments(y, chunk_size=chunk_size, onset=vad_onset)
-        logger.info(f"[ASR] Silero VAD → {len(chunks)} chunks (WhisperX style, max={chunk_size}s)")
+        if vad_db:
+            top_db = float(vad_db)
+            chunks = _db_segments(y, top_db=top_db, merge_gap=merge_gap, min_duration=min_duration, max_chunk=chunk_size)
+            logger.info(f"[ASR] DB-based VAD ({top_db}dB) → {len(chunks)} chunks (max={chunk_size}s, gap={merge_gap}s)")
+        else:
+            chunks = _silero_segments(y, chunk_size=chunk_size, onset=vad_onset)
+            logger.info(f"[ASR] Silero VAD → {len(chunks)} chunks (WhisperX style, max={chunk_size}s)")
     except Exception as e:
-        logger.warning(f"[ASR] Silero failed ({e}), fallback to fixed 10s chunks")
+        logger.warning(f"[ASR] VAD failed ({e}), fallback to fixed 10s chunks")
         chunks = []
         start = 0.0
         while start < duration:

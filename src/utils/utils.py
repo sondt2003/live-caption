@@ -2,6 +2,15 @@ import re
 import string
 import numpy as np
 from scipy.io import wavfile
+from loguru import logger
+
+# Initialize WeTextProcessing for Chinese text normalization
+try:
+    from tn.chinese.normalizer import Normalizer
+    chinese_normalizer = Normalizer()
+except ImportError:
+    logger.warning("Could not import WeTextProcessing. Chinese text normalization will be limited.")
+    chinese_normalizer = None
 
 def sanitize_filename(filename: str) -> str:
     # Định nghĩa tập hợp các ký tự hợp lệ
@@ -108,3 +117,29 @@ SUPPORT_VOICE = ['zu-ZA-ThembaNeural', 'zu-ZA-ThandoNeural',  'zh-TW-YunJheNeura
     'ar-KW-NouraNeural', 'ar-KW-FahedNeural', 'ar-JO-TaimNeural', 'ar-JO-SanaNeural', 'ar-IQ-RanaNeural', 'ar-IQ-BasselNeural', 
     'ar-EG-ShakirNeural', 'ar-EG-SalmaNeural', 'ar-DZ-IsmaelNeural', 'ar-DZ-AminaNeural', 'ar-BH-LailaNeural', 'ar-BH-AliNeural', 
     'ar-AE-HamdanNeural', 'ar-AE-FatimaNeural', 'am-ET-MekdesNeural', 'am-ET-AmehaNeural', 'af-ZA-WillemNeural', 'af-ZA-AdriNeural']
+
+def clean_chinese_text(text):
+    """
+    Remove spaces between Chinese characters which often confuse translators.
+    Only applies if Chinese characters are detected.
+    """
+    # Only normalize if Chinese characters are present
+    if not re.search(r'[\u4e00-\u9fff]', text):
+        return text
+        
+    if chinese_normalizer:
+        # 1. First use industry-standard normalization (NSW: dates, numbers, etc.)
+        try:
+            text = chinese_normalizer.normalize(text)
+        except Exception as e:
+            logger.warning(f"WeTextProcessing normalization failed: {e}")
+        
+    # 2. Then remove remaining spaces between Chinese characters (ASR Detached chars)
+    # Pattern: space between two Chinese characters
+    pattern = r'([\u4e00-\u9fff])\s+([\u4e00-\u9fff])'
+    last_text = ""
+    while last_text != text:
+        last_text = text
+        text = re.sub(pattern, r'\1\2', text)
+        
+    return text

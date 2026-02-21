@@ -5,6 +5,8 @@ import torch
 from loguru import logger
 from .factory import TranslatorFactory
 
+from src.utils.utils import clean_chinese_text
+
 def is_translated(original, translated, target_lang):
     """
     Check if the text was actually translated.
@@ -39,18 +41,6 @@ def is_translated(original, translated, target_lang):
             
     return True
 
-def clean_chinese_text(text):
-    """
-    Remove spaces between Chinese characters which often confuse translators.
-    Example: "难 道 说" -> "难道说"
-    """
-    # Pattern: space between two Chinese characters
-    pattern = r'([\u4e00-\u9fff])\s+([\u4e00-\u9fff])'
-    last_text = ""
-    while last_text != text:
-        last_text = text
-        text = re.sub(pattern, r'\1\2', text)
-    return text
 
 def get_transcript_summary(transcript):
     """
@@ -308,8 +298,11 @@ def translate(method, folder, target_language='vi'):
 
     translation = _translate(summary, transcript, target_language, method)
     for i, line in enumerate(transcript):
+        # Update original text with normalized version
+        line['text'] = clean_chinese_text(line['text'])
         line['translation'] = translation[i]
     
+    # Re-enabled splitting for better timing as requested by user
     transcript = split_sentences(transcript)
     with open(os.path.join(folder, 'translation.json'), 'w', encoding='utf-8') as f:
         json.dump(transcript, f, indent=2, ensure_ascii=False)

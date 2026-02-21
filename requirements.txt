@@ -52,6 +52,7 @@ soundfile
 edge-tts
 anthropic
 translators
+wetextprocessing
 
 # ==========================================
 # Data Handling & Utilities

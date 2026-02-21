@@ -43,12 +43,8 @@ class GoogleTranslator(BaseTranslator):
 
         to_lang = self._normalize_lang(self.target_language)
         
-        # Primary server
+        # Only use the specified server, no fallbacks as requested
         servers = [self.server]
-        if self.server == 'google':
-             servers.append('bing')
-        elif self.server == 'bing':
-             servers.append('google')
         
         for srv in servers:
             for retry in range(2):
