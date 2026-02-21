@@ -12,6 +12,42 @@ def get_transcript_summary(transcript):
     all_text = " ".join([seg['text'] for seg in transcript])
     return all_text[:500] # Limit to 500 chars for summary context
 
+def repair_json(s):
+    if not s:
+        return s
+    
+    s = s.strip()
+    
+    # Remove markdown code blocks if present
+    if "```json" in s:
+        s = s.split("```json")[1].split("```")[0].strip()
+    elif "```" in s:
+        s = s.split("```")[1].split("```")[0].strip()
+    
+    # If it still doesn't look like JSON, try to extract it
+    if not (s.startswith('{') or s.startswith('[')):
+        start_brace = s.find('{')
+        start_bracket = s.find('[')
+        
+        if start_brace != -1 and (start_bracket == -1 or start_brace < start_bracket):
+            s = s[start_brace : s.rfind('}') + 1]
+        elif start_bracket != -1:
+            s = s[start_bracket : s.rfind(']') + 1]
+
+    # Try to fix unescaped quotes between property names and separators
+    def replace_quotes(match):
+        prefix = match.group(1)
+        content = match.group(2)
+        suffix = match.group(3)
+        # Escape internal quotes
+        content = content.replace('"', '\\"')
+        return f'{prefix}"{content}"{suffix}'
+
+    pattern = r'(:[ \n]*)"(.*?)"([ \n]*[,}])'
+    s = re.sub(pattern, replace_quotes, s, flags=re.DOTALL)
+    
+    return s
+
 def split_text_into_sentences(para):
     # Support both English and CJK punctuation
     # Use negative lookahead (?![0-9]) to avoid splitting at decimal points or thousand separators
@@ -43,43 +79,90 @@ def _translate(summary, transcript, target_language, method):
     curr_batch = []
     curr_chars = 0
     
+    # Batching logic: Groq/LLMs work better with context, Google works better with large blocks
+    is_traditional = method.lower() in ['google', 'bing']
+    # Traditional engines are sensitive to total character count including tags
+    # and number of segments. 1000 chars and 50 segments is a very safe limit.
+    max_chars = 1000 if is_traditional else 500
+    max_segments = 50 if is_traditional else 100
+    
+    batches = []
+    curr_batch = []
+    curr_chars = 0
+    tag_overhead = 20 # Estimate for <p id="123">...</p>
+    
     for i, seg in enumerate(transcript):
         text = seg['text']
-        # Reduce batch size to 500 for 8b model stability
-        if curr_batch and (curr_chars + len(text) > 500):
+        seg_cost = len(text) + (tag_overhead if is_traditional else 0)
+        
+        if curr_batch and (curr_chars + seg_cost > max_chars or len(curr_batch) >= max_segments):
             batches.append(curr_batch)
             curr_batch = []
             curr_chars = 0
         curr_batch.append({"id": i, "text": text})
-        curr_chars += len(text)
+        curr_chars += seg_cost
     if curr_batch:
         batches.append(curr_batch)
         
     all_translations = [None] * len(transcript)
     
     for batch in batches:
-        system_prompt = f"Translate the following subtitles to {target_language}. Context: {summary}. \n" \
-                        f"Rules:\n" \
-                        f"1. Use natural spoken Vietnamese (I='mình', You='các bạn').\n" \
-                        f"2. Return STRICT JSON: {{ \"id\": \"translation\" }}.\n" \
-                        f"3. Maintain original meaning but make it sound like a Vlog."
+        # Traditional translators (Google/Bing) don't handle JSON well
+        is_json_method = method.lower() not in ['google', 'bing']
         
-        user_content = json.dumps(batch, ensure_ascii=False)
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content}
-        ]
-        
-        response_json = translator.translate(messages)
+        if is_json_method:
+            system_prompt = f"Translate the following subtitles to {target_language}. Context: {summary}. \n" \
+                            f"Rules:\n" \
+                            f"1. Use natural spoken Vietnamese (I='mình', You='các bạn').\n" \
+                            f"2. Return STRICT JSON: {{ \"id\": \"translation\" }}. Escape all double quotes inside the translation text with backslashes.\n" \
+                            f"3. Maintain original meaning but make it sound like a Vlog.\n" \
+                            f"4. Do not include any text other than the JSON object."
+            
+            user_content = json.dumps(batch, ensure_ascii=False)
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content}
+            ]
+            response_json = translator.translate(messages)
+        else:
+            # Strategy for Google/Bing: HTML tags for max stability
+            # Google Translate preserves HTML structure and attributes perfectly
+            lines = [f'<p id="{item["id"]}">{item["text"]}</p>' for item in batch]
+            user_content = "".join(lines)
+            messages = [{"role": "user", "content": user_content}]
+            
+            # Use json_mode=False for direct text processing
+            response_text = translator.translate(messages, json_mode=False)
+            
+            if response_text:
+                temp_trans = {}
+                # Regex to extract id and content from <p id="idx">content</p>
+                # Case-insensitive and handles single/double/no quotes for id attribute
+                matches = re.findall(r'<p id=["\']?(\d+)["\']?>(.*?)</p>', response_text, re.DOTALL | re.IGNORECASE)
+                for it_id, it_text in matches:
+                    try:
+                        temp_trans[int(it_id)] = it_text.strip()
+                    except:
+                        continue
+                
+                # Check if we got enough translations back
+                if len(temp_trans) >= len(batch) * 0.7:
+                    for item in batch:
+                        idx = item['id']
+                        all_translations[idx] = temp_trans.get(idx, item['text'])
+                    continue # Batch handled, move to next
+                else:
+                    logger.warning(f"Batch translation failed for {method} (HTML count mismatch: {len(temp_trans)}/{len(batch)}). Falling back to individual.")
+                    response_json = None
+            else:
+                response_json = None
+
         if response_json:
             try:
-                # Clean response if LLM adds markdown blocks
-                if "```json" in response_json:
-                    response_json = response_json.split("```json")[1].split("```")[0].strip()
-                elif "```" in response_json:
-                    response_json = response_json.split("```")[1].split("```")[0].strip()
+                # Clean and repair response
+                response_json = repair_json(response_json)
                 
-                batch_trans = json.loads(response_json)
+                batch_trans = json.loads(response_json, strict=False)
                 if isinstance(batch_trans, list):
                     # Handle Google/Bing returning a list of dicts [{"id": 0, "text": "trans"}, ...]
                     for item_trans in batch_trans:

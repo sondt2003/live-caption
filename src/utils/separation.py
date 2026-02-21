@@ -19,8 +19,8 @@ def separate_audio(folder, model_name="UVR-MDX-NET-Inst_HQ_3"):
     if os.path.exists(vocal_output_path) and os.path.exists(inst_output_path): return vocal_output_path, inst_output_path
     
     logger.info(f"Separating audio using {model_name}...")
-    # Reduce segment_size to 128 to prevent OOM on 8GB VRAM cards
-    sep = Separator(output_dir=folder, mdx_params={"hop_length": 1024, "segment_size": 128, "overlap": 0.25, "batch_size": 1, "enable_denoise": False})
+    # Increase batch_size and segment_size to better utilize GPU
+    sep = Separator(output_dir=folder, mdx_params={"hop_length": 1024, "segment_size": 256, "overlap": 0.25, "batch_size": 10, "enable_denoise": False})
     sep.load_model(model_name)
     output_files = sep.separate(audio_path)
     if not output_files: raise Exception("Separation failed")

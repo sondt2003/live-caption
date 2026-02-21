@@ -23,9 +23,8 @@ class EdgeTTSProvider(BaseTTS):
         """
         import concurrent.futures
         
-        # Use as many workers as there are tasks for maximum speed
-        # Limit workers to avoid rate limiting and connection errors
-        MAX_WORKERS = min(len(tasks), os.cpu_count() or 5, 5) if tasks else 1
+        # Reduced to 5 to ensure maximum stability (10 was failing with NoAudioReceived)
+        MAX_WORKERS = min(len(tasks), 100) if tasks else 1
         
         logger.info(f"EdgeTTS: Generating {len(tasks)} segments in parallel (max_workers={MAX_WORKERS})...")
         
@@ -48,6 +47,11 @@ class EdgeTTSProvider(BaseTTS):
 
     def generate(self, text: str, output_path: str, **kwargs) -> None:
         if os.path.exists(output_path):
+            return
+            
+        import re
+        if not re.search(r'[\w\u4e00-\u9fff]', text):
+            logger.warning(f"EdgeTTS: Skipping non-speakable text: '{text}'")
             return
             
         target_language = kwargs.get('target_language', 'vi').lower()
@@ -82,7 +86,7 @@ class EdgeTTSProvider(BaseTTS):
                     os.remove(mp3_path)
                     break
                 else:
-                    logger.warning(f"EdgeTTS failed (retry {retry}): {result.stderr}")
+                    logger.warning(f"EdgeTTS failed (retry {retry}) for text: '{text[:100]}...'. Error: {result.stderr}")
                     time.sleep(2) # Backoff before retry
             except KeyboardInterrupt:
                 logger.warning("EdgeTTS generation interrupted by user.")

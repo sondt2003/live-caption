@@ -157,8 +157,8 @@ def generate_all_wavs_under_folder(folder, method='auto', target_language='vi', 
         t_voice = voice_mapper.get_voice(speaker, text)
         if (voice in [None, 'auto', 'vi-VN-HoaiMyNeural']) and 'vi' in target_language and "EdgeTTS" in str(type(engine)):
             t_voice = 'vi-VN-NamMinhNeural' if speaker_gender_map.get(speaker, 'female') == 'male' else 'vi-VN-HoaiMyNeural'
-        if not text.strip():
-            logger.warning(f"Skipping empty text for segment {i}")
+        if not text.strip() or not re.search(r'[\w\u4e00-\u9fff]', text):
+            logger.warning(f"Skipping non-speakable text for segment {i}: '{text}'")
             continue
         tasks.append({"text": text, "output_path": out_p, "speaker_wav": spk_wav, "ref_text": None, "target_language": target_language, "voice": t_voice})
 

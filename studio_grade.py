@@ -15,9 +15,14 @@ warnings.filterwarnings("ignore", message=".*torchcodec is not installed correct
 warnings.filterwarnings("ignore", message=".*torchaudio._backend.list_audio_backends.*")
 warnings.filterwarnings("ignore", category=FutureWarning, message=".*torch.cuda.amp.custom_fwd.*")
 warnings.filterwarnings("ignore", message=".*CategoricalEncoder.expect_len was never called.*")
+warnings.filterwarnings("ignore", message=".*Passing `gradient_checkpointing` to a config initialization is deprecated.*")
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
+
+import logging
+logging.getLogger("speechbrain").setLevel(logging.ERROR)
+logging.getLogger("speechbrain.utils.fetching").setLevel(logging.ERROR)
 
 def main():
     load_dotenv()
