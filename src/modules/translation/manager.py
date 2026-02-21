@@ -5,6 +5,53 @@ import torch
 from loguru import logger
 from .factory import TranslatorFactory
 
+def is_translated(original, translated, target_lang):
+    """
+    Check if the text was actually translated.
+    Fails if:
+    1. translated is identical to original
+    2. translated still contains too many Chinese characters when it should be Vietnamese
+    """
+    if not translated or not original:
+        return False
+        
+    orig_clean = original.strip()
+    trans_clean = translated.strip()
+    
+    if orig_clean == trans_clean:
+        return False
+        
+    # If target is Vietnamese and result still looks like Chinese or has refusal phrases
+    if 'vi' in target_lang.lower():
+        # Check for common LLM refusal phrases in various languages
+        refusals = [
+            "tôi không thể", "i cannot", "i am sorry", "không thể dịch", 
+            "xin lỗi", "lỗi", "không tiến hành", "cannot proceed"
+        ]
+        trans_lower = trans_clean.lower()
+        if any(r in trans_lower for r in refusals):
+            return False
+            
+        chinese_chars = len(re.findall(r'[\u4e00-\u9fff]', trans_clean))
+        total_chars = len(trans_clean.replace(" ", ""))
+        if total_chars > 0 and (chinese_chars / total_chars) > 0.3:
+            return False
+            
+    return True
+
+def clean_chinese_text(text):
+    """
+    Remove spaces between Chinese characters which often confuse translators.
+    Example: "难 道 说" -> "难道说"
+    """
+    # Pattern: space between two Chinese characters
+    pattern = r'([\u4e00-\u9fff])\s+([\u4e00-\u9fff])'
+    last_text = ""
+    while last_text != text:
+        last_text = text
+        text = re.sub(pattern, r'\1\2', text)
+    return text
+
 def get_transcript_summary(transcript):
     """
     Get a summary of the transcript for context-aware translation.
@@ -83,8 +130,9 @@ def _translate(summary, transcript, target_language, method):
     is_traditional = method.lower() in ['google', 'bing']
     # Traditional engines are sensitive to total character count including tags
     # and number of segments. 1000 chars and 50 segments is a very safe limit.
-    max_chars = 1000 if is_traditional else 500
-    max_segments = 50 if is_traditional else 100
+    # For LLMs, we reduce batch size significantly for better focus (Ref: Chinese translation issues)
+    max_chars = 1000 if is_traditional else 300
+    max_segments = 50 if is_traditional else 15
     
     batches = []
     curr_batch = []
@@ -92,7 +140,7 @@ def _translate(summary, transcript, target_language, method):
     tag_overhead = 20 # Estimate for <p id="123">...</p>
     
     for i, seg in enumerate(transcript):
-        text = seg['text']
+        text = clean_chinese_text(seg['text'])
         seg_cost = len(text) + (tag_overhead if is_traditional else 0)
         
         if curr_batch and (curr_chars + seg_cost > max_chars or len(curr_batch) >= max_segments):
@@ -107,6 +155,7 @@ def _translate(summary, transcript, target_language, method):
     all_translations = [None] * len(transcript)
     
     for batch in batches:
+        response_json = None
         # Traditional translators (Google/Bing) don't handle JSON well
         is_json_method = method.lower() not in ['google', 'bing']
         
@@ -114,7 +163,7 @@ def _translate(summary, transcript, target_language, method):
             system_prompt = f"Translate the following subtitles to {target_language}. Context: {summary}. \n" \
                             f"Rules:\n" \
                             f"1. Use natural spoken Vietnamese (I='mình', You='các bạn').\n" \
-                            f"2. Return STRICT JSON: {{ \"id\": \"translation\" }}. Escape all double quotes inside the translation text with backslashes.\n" \
+                            f"2. Return STRICT JSON: {{ \"0\": \"translation\", \"1\": \"translation\" }}. Replace the numeric keys with the actual IDs provided.\n" \
                             f"3. Maintain original meaning but make it sound like a Vlog.\n" \
                             f"4. Do not include any text other than the JSON object."
             
@@ -149,8 +198,19 @@ def _translate(summary, transcript, target_language, method):
                 if len(temp_trans) >= len(batch) * 0.7:
                     for item in batch:
                         idx = item['id']
-                        all_translations[idx] = temp_trans.get(idx, item['text'])
-                    continue # Batch handled, move to next
+                        translated_text = temp_trans.get(idx)
+                        
+                        # Validate if it's actually translated
+                        if translated_text and is_translated(item['text'], translated_text, target_language):
+                            all_translations[idx] = translated_text
+                        else:
+                            # If individual segment failed or is identical, it will remain None 
+                            # and be retried individually below
+                            logger.warning(f"Segment {idx} untranslated or identical, will retry individually.")
+                    
+                    # If all segments in batch are now filled, we can move to next batch
+                    if all(all_translations[item['id']] is not None for item in batch):
+                        continue
                 else:
                     logger.warning(f"Batch translation failed for {method} (HTML count mismatch: {len(temp_trans)}/{len(batch)}). Falling back to individual.")
                     response_json = None
@@ -169,35 +229,46 @@ def _translate(summary, transcript, target_language, method):
                         it_id = item_trans.get('id')
                         it_text = item_trans.get('text')
                         if it_id is not None:
-                            all_translations[int(it_id)] = it_text
+                            idx = int(it_id)
+                            # Find original text for validation
+                            orig_text = next((item['text'] for item in batch if item['id'] == idx), None)
+                            if orig_text and it_text and is_translated(orig_text, it_text, target_language):
+                                all_translations[idx] = it_text
                 else:
-                    # Handle LLM returning a dict { "0": "trans", "1": "trans", ... }
+                    # Handle LLM returning a dict { "0": "trans", "1": "trans", ... } or { 0: "trans", ... }
                     for item in batch:
                         idx = item['id']
-                        all_translations[idx] = batch_trans.get(str(idx), item['text'])
+                        # Try both string and int keys
+                        translated_text = batch_trans.get(str(idx)) or batch_trans.get(idx)
+                        
+                        if translated_text and is_translated(item['text'], translated_text, target_language):
+                            all_translations[idx] = translated_text
+                        else:
+                            logger.warning(f"Segment {idx} failed JSON validation/missing, will retry individually.")
             except Exception as e:
                 logger.warning(f"Failed to parse batch json. Retrying individually... Error: {e}")
                 # Fallback: Translate individually
-                logger.warning(f"Batch translation failed for {len(batch)} items. Falling back to individual translation (Text Mode)...")
-                for item in batch:
-                    try:
-                        s_prompt = f"Translate the following text to {target_language}. Context: {summary}. Return ONLY the translation text."
-                        msgs = [{"role": "system", "content": s_prompt}, {"role": "user", "content": item['text']}]
-                        # Use json_mode=False for better adherence on small models for single lines
-                        res = translator.translate(msgs, json_mode=False)
-                        all_translations[item['id']] = res if res else item['text']
-                    except Exception as e:
-                         all_translations[item['id']] = item['text']
-        else:
-            logger.warning(f"Translator returned None for batch of {len(batch)} items. Retrying individually (Text Mode)...")
-            for item in batch:
-                try:
-                    s_prompt = f"Translate the following text to {target_language}. Context: {summary}. Return ONLY the translation text."
-                    msgs = [{"role": "system", "content": s_prompt}, {"role": "user", "content": item['text']}]
-                    res = translator.translate(msgs, json_mode=False)
-                    all_translations[item['id']] = res if res else item['text']
-                except:
-                    all_translations[item['id']] = item['text']
+    # Final individual retry for any segments still missing or failed
+    for i, seg in enumerate(transcript):
+        if all_translations[i] is None:
+            text = seg['text']
+            # Clean Chinese text before individual retry
+            text = clean_chinese_text(text)
+            
+            logger.info(f"Retrying individual translation for segment {i}: {text[:50]}...")
+            try:
+                s_prompt = f"Translate the following text to {target_language}. Context: {summary}. Return ONLY the translation text."
+                msgs = [{"role": "system", "content": s_prompt}, {"role": "user", "content": text}]
+                res = translator.translate(msgs, json_mode=False)
+                
+                if res and is_translated(text, res, target_language):
+                    all_translations[i] = res
+                else:
+                    # Last resort fallback to original text if translation still fails
+                    all_translations[i] = seg['text']
+            except Exception as e:
+                logger.error(f"Final retry failed for segment {i}: {e}")
+                all_translations[i] = seg['text']
                 
     return all_translations
 

@@ -96,16 +96,21 @@ def load_diarize_model(device='auto'):
         token = os.getenv('HF_TOKEN')
         local_path = os.getenv('DIARIZATION_MODEL_PATH')
         
-        # Ưu tiên load từ local path nếu đã download về máy
-        if local_path and os.path.exists(local_path):
-            logger.info(f"Loading diarization model from local path: {local_path}")
-            diarize_model = whisperx.DiarizationPipeline(model_name=local_path, device=device)
-        elif token:
+        if token:
             logger.info("Loading diarization model from Hugging Face...")
             diarize_model = whisperx.DiarizationPipeline(use_auth_token=token, device=device)
+        elif local_path and os.path.exists(local_path):
+            logger.info(f"Loading diarization model from local path: {local_path}")
+            diarize_model = whisperx.DiarizationPipeline(model_name=local_path, device=device)
         else:
             logger.warning("HF_TOKEN and DIARIZATION_MODEL_PATH are not set, skipping diarization")
             return
+            
+        # Fix for Pyannote 3.1+ OOM issues (GitHub #1580)
+        # Reducing embedding_batch_size from 32 to 1 significantly reduces VRAM and often improves speed
+        if hasattr(diarize_model, 'pipeline'):
+            logger.info("Setting diarization pipeline embedding_batch_size to 1 for VRAM stability")
+            diarize_model.pipeline.embedding_batch_size = 1
             
         t_end = time.time()
         logger.info(f'Loaded diarization model in {t_end - t_start:.2f}s')
