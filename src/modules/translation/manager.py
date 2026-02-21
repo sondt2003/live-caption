@@ -14,10 +14,11 @@ def get_transcript_summary(transcript):
 
 def split_text_into_sentences(para):
     # Support both English and CJK punctuation
-    para = re.sub(r'([。！？\?\.!])([^，。！？\?\.!”’》])', r"\1\n\2", para)
-    para = re.sub(r'(\.{6})([^，。！？\?\.!”’》])', r"\1\n\2", para)
-    para = re.sub(r'(\…{2})([^，。！？\?\.!”’》])', r"\1\n\2", para)
-    para = re.sub(r'([。！？\?\.!][”’])([^，。！？\?\.!”’》])', r'\1\n\2', para)
+    # Use negative lookahead (?![0-9]) to avoid splitting at decimal points or thousand separators
+    para = re.sub(r'([。！？\?\.\!])(?![0-9])([^，。！？\?\.\!”’》])', r"\1\n\2", para)
+    para = re.sub(r'(\.{6})([^，。！？\?\.\!”’》])', r"\1\n\2", para)
+    para = re.sub(r'(\…{2})([^，。！？\?\.\!”’》])', r"\1\n\2", para)
+    para = re.sub(r'([。！？\?\.\!][”’])([^，。！？\?\.\!”’》])', r'\1\n\2', para)
     para = para.rstrip()
     sentences = para.split("\n")
     
