@@ -43,38 +43,34 @@ def main():
         elif args.provider == "vieneu":
             from vieneu import Vieneu
             
-            # Use small chunks per instance to manage context
-            # Re-initializing every 10 segments is a good balance between speed and stability
-            batch_size = 10
-            for i in range(0, len(tasks), batch_size):
-                chunk = tasks[i:i + batch_size]
-                tts = Vieneu()
-                try:
-                    for task in chunk:
-                        text = task.get("text")
-                        output_path = task.get("output_path")
-                        ref_audio = task.get("ref_audio")
-                        ref_text = task.get("ref_text")
-                        voice_name = task.get("voice")
+            # Khởi tạo model MỘT LẦN duy nhất cho toàn bộ batch
+            tts = Vieneu()
+            try:
+                for task in tasks:
+                    text = task.get("text")
+                    output_path = task.get("output_path")
+                    ref_audio = task.get("ref_audio")
+                    ref_text = task.get("ref_text")
+                    voice_name = task.get("voice")
+                    
+                    if ref_audio and ref_text:
+                        # Use cloned voice with reference
+                        audio = tts.infer(text=text, ref_audio=ref_audio, ref_text=ref_text)
+                    elif ref_audio:
+                        # Use cloned voice without text (fallback)
+                        audio = tts.infer(text=text, ref_audio=ref_audio)
+                    elif voice_name:
+                        # Use preset voice
+                        voice_data = tts.get_preset_voice(voice_name)
+                        audio = tts.infer(text=text, voice=voice_data)
+                    else:
+                        # Default voice
+                        audio = tts.infer(text=text)
                         
-                        if ref_audio and ref_text:
-                            # Use cloned voice with reference
-                            audio = tts.infer(text=text, ref_audio=ref_audio, ref_text=ref_text)
-                        elif ref_audio:
-                            # Use cloned voice without text (fallback)
-                            audio = tts.infer(text=text, ref_audio=ref_audio)
-                        elif voice_name:
-                            # Use preset voice
-                            voice_data = tts.get_preset_voice(voice_name)
-                            audio = tts.infer(text=text, voice=voice_data)
-                        else:
-                            # Default voice
-                            audio = tts.infer(text=text)
-                            
-                        tts.save(audio, output_path)
-                        print(f"SUCCESS:{output_path}")
-                finally:
-                    tts.close()
+                    tts.save(audio, output_path)
+                    print(f"SUCCESS:{output_path}")
+            finally:
+                tts.close()
 
         else:
             print(f"Error: Unknown provider {args.provider}")

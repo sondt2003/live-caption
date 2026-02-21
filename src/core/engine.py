@@ -49,34 +49,43 @@ def initialize_models(tts_method, asr_method, diarization):
     # Sử dụng trạng thái toàn cục để theo dõi các mô hình đã khởi tạo
     global models_initialized
 
-    with ThreadPoolExecutor() as executor:
-        try:
-            # Khởi tạo mô hình Demucs
-            if not models_initialized['demucs']:
-                executor.submit(init_demucs)
-                models_initialized['demucs'] = True
-                logger.info("Khởi tạo mô hình Demucs hoàn tất")
-            
-            # Khởi tạo mô hình Dereverb
-            if not models_initialized.get('dereverb', False):
-                executor.submit(init_dereverb)
-                models_initialized['dereverb'] = True
-                logger.info("Đang khởi tạo mô hình khử vang DeepFilterNet...")
+    # LAZY LOADING STRATEGY:
+    # Instead of pre-loading everything, we let the individual processing steps
+    # load models as needed. This significantly reduces peak VRAM usage and startup time.
+    # The 'init_demucs', 'init_dereverb', etc. functions already handle singleton logic.
+    
+    logger.info("Optimization: Skipping eager model loading. Models will be loaded on demand.")
+    return
 
-            # LƯU Ý: Không khởi tạo WhisperX ở đây để tránh OOM (std::bad_alloc)
-            # Nó sẽ được tải lười (lazy load) khi thực sự cần thiết trong pipeline
-            if asr_method == 'FunASR' and not models_initialized['funasr']:
-                executor.submit(init_funasr)
-                models_initialized['funasr'] = True
-                logger.info("Khởi tạo mô hình FunASR hoàn tất")
-
-        except Exception as e:
-            stack_trace = traceback.format_exc()
-            logger.error(f"Khởi tạo mô hình thất bại: {str(e)}\n{stack_trace}")
-            # Reset trạng thái khởi tạo nếu có lỗi
-            models_initialized = {key: False for key in models_initialized}
-            release_model()  # Giải phóng các mô hình đã tải
-            raise
+    # OLD EAGER LOADING LOGIC (DISABLED)
+    # with ThreadPoolExecutor() as executor:
+    #     try:
+    #         # Khởi tạo mô hình Demucs
+    #         if not models_initialized['demucs']:
+    #             executor.submit(init_demucs)
+    #             models_initialized['demucs'] = True
+    #             logger.info("Khởi tạo mô hình Demucs hoàn tất")
+    #         
+    #         # Khởi tạo mô hình Dereverb
+    #         if not models_initialized.get('dereverb', False):
+    #             executor.submit(init_dereverb)
+    #             models_initialized['dereverb'] = True
+    #             logger.info("Đang khởi tạo mô hình khử vang DeepFilterNet...")
+    #
+    #         # LƯU Ý: Không khởi tạo WhisperX ở đây để tránh OOM (std::bad_alloc)
+    #         # Nó sẽ được tải lười (lazy load) khi thực sự cần thiết trong pipeline
+    #         if asr_method == 'FunASR' and not models_initialized['funasr']:
+    #             executor.submit(init_funasr)
+    #             models_initialized['funasr'] = True
+    #             logger.info("Khởi tạo mô hình FunASR hoàn tất")
+    #
+    #     except Exception as e:
+    #         stack_trace = traceback.format_exc()
+    #         logger.error(f"Khởi tạo mô hình thất bại: {str(e)}\n{stack_trace}")
+    #         # Reset trạng thái khởi tạo nếu có lỗi
+    #         models_initialized = {key: False for key in models_initialized}
+    #         release_model()  # Giải phóng các mô hình đã tải
+    #         raise
 
 
 def process_video(video_file, root_folder, resolution,

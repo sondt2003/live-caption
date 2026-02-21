@@ -17,10 +17,38 @@ class EdgeTTSProvider(BaseTTS):
         }
         self.edge_tts_path = os.path.join(os.path.dirname(sys.executable), 'edge-tts')
 
+    def generate_batch(self, tasks: list) -> None:
+        """
+        Generate multiple audio files in parallel.
+        """
+        import concurrent.futures
+        
+        # Max workers for EdgeTTS to avoid rate limits while maintaining speed
+        MAX_WORKERS = 10
+        
+        logger.info(f"EdgeTTS: Generating {len(tasks)} segments in parallel (max_workers={MAX_WORKERS})...")
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = []
+            for task in tasks:
+                text = task.get("text")
+                output_path = task.get("output_path")
+                # Extract other kwargs
+                kwargs = {k: v for k, v in task.items() if k not in ["text", "output_path"]}
+                
+                futures.append(executor.submit(self.generate, text, output_path, **kwargs))
+            
+            # Wait for all tasks to complete and handle exceptions
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    future.result()
+                except Exception as e:
+                    logger.error(f"EdgeTTS batch task failed: {e}")
+
     def generate(self, text: str, output_path: str, **kwargs) -> None:
         if os.path.exists(output_path):
             return
-
+            
         target_language = kwargs.get('target_language', 'vi').lower()
         voice = kwargs.get('voice')
 
@@ -34,10 +62,15 @@ class EdgeTTSProvider(BaseTTS):
         logger.info(f"Using EdgeTTS voice: {voice} for language: {target_language}")
         
         mp3_path = output_path.replace(".wav", ".mp3")
+        import time 
+        
         for retry in range(3):
             try:
+                # Use --rate if provided (not implemented yet but good for future)
+                cmd = [self.edge_tts_path, '--text', text, '--write-media', mp3_path, '--voice', voice]
+                
                 result = subprocess.run(
-                    [self.edge_tts_path, '--text', text, '--write-media', mp3_path, '--voice', voice],
+                    cmd,
                     capture_output=True, text=True
                 )
                 
@@ -48,5 +81,7 @@ class EdgeTTSProvider(BaseTTS):
                     break
                 else:
                     logger.warning(f"EdgeTTS failed (retry {retry}): {result.stderr}")
+                    time.sleep(1) # Backoff before retry
             except Exception as e:
                 logger.error(f"EdgeTTS unexpected error: {e}")
+                time.sleep(1) # Backoff

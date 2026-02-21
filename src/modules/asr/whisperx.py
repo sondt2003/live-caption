@@ -57,7 +57,9 @@ def load_whisper_model(model_name: str = 'large', download_root = 'models/ASR/wh
     if device == 'cpu':
         whisper_model = whisperx.load_model(model_name, download_root=download_root, device=device, compute_type='int8')
     else:
-        whisper_model = whisperx.load_model(model_name, download_root=download_root, device=device)
+        # Save VRAM by using float16 (default) or int8_float16 if supported
+        # float16 is faster and uses less VRAM than float32
+        whisper_model = whisperx.load_model(model_name, download_root=download_root, device=device, compute_type='float16')
         
     t_end = time.time()
     logger.info(f'Loaded WhisperX model: {model_name} in {t_end - t_start:.2f}s')
