@@ -44,24 +44,16 @@ class VieNeuProvider(BaseTTS):
         # Send all segments in one subprocess call
         logger.info(f"VieNeu-TTS generating {len(pending_tasks)} segments (isolated venv, load-once)...")
         
-        log_file = os.path.join(os.getcwd(), "bridge_debug.log")
-        with open(log_file, "a", encoding="utf-8") as f:
-            f.write(f"\n--- Full Batch Start ({len(pending_tasks)} segments) ---\n")
-
         cmd = [
             self.venv_path,
             self.bridge_path,
             "--provider", "vieneu",
-            "--params", json.dumps({"tasks": pending_tasks})
+             "--params", json.dumps({"tasks": pending_tasks})
         ]
         
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, check=True, encoding="utf-8")
             stdout = result.stdout
-            stderr = result.stderr
-            
-            with open(log_file, "a", encoding="utf-8") as f:
-                f.write(f"SUCCESS\nSTDOUT:\n{stdout}\n")
             
             lines = stdout.strip().splitlines()
             successes = [l for l in lines if l.startswith("SUCCESS:")]
@@ -71,8 +63,6 @@ class VieNeuProvider(BaseTTS):
                 logger.warning(f"VieNeu-TTS completed but no SUCCESS markers found.")
 
         except subprocess.CalledProcessError as e:
-            with open(log_file, "a", encoding="utf-8") as f:
-                f.write(f"FAILED (CalledProcessError) code {e.returncode}\nSTDOUT:\n{e.stdout}\nSTDERR:\n{e.stderr}\n")
             logger.error(f"VieNeu-TTS failed with exit code {e.returncode}")
             raise Exception(f"VieNeu-TTS failed: {e.stderr or e.stdout}")
         except Exception as e:
