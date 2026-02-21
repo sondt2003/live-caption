@@ -262,17 +262,6 @@ def synthesize_video(folder, subtitles=True, speed_up=1.00, fps=30, resolution='
                 filter_complex = ""
                 v_map = "0:v"
 
-        # Hardcode subtitles
-        if subtitles:
-            font_size = int(target_w/128)
-            outline = int(round(font_size/8))
-            style = f"FontName=SimHei,FontSize={font_size},PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline={outline},WrapStyle=2"
-            new_v_map = "[v_with_sub]"
-            if filter_complex:
-                filter_complex += f";{v_map}subtitles='{srt_path_ffmpeg}':force_style='{style}'{new_v_map}"
-            else:
-                filter_complex = f"[0:v]subtitles='{srt_path_ffmpeg}':force_style='{style}'{new_v_map}"
-            v_map = new_v_map
 
         # Watermark
         input_args = ['-i', input_video, '-i', input_audio]

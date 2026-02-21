@@ -94,7 +94,7 @@ def process_video(video_file, root_folder, resolution,
                   translation_method, translation_target_language,
                   tts_method, tts_target_language, voice,
                   subtitles, speed_up, fps, background_music, bgm_volume, video_volume,
-                  target_resolution, max_retries, progress_callback=None, tracker=None):
+                  target_resolution, max_retries, progress_callback=None, tracker=None, audio_only=False):
     """
     Quy trình xử lý hoàn chỉnh cho một video duy nhất với hỗ trợ callback tiến độ.
 
@@ -265,25 +265,31 @@ def process_video(video_file, root_folder, resolution,
                 return False, None, error_msg
 
             # Chuyển sang giai đoạn tổng hợp video
-            current_stage += 1
-            progress_base += stage_weight
-            stage_name, stage_weight = stages[current_stage]
-            if progress_callback:
-                progress_callback(progress_base, stage_name)
+            if not audio_only:
+                current_stage += 1
+                progress_base += stage_weight
+                stage_name, stage_weight = stages[current_stage]
+                if progress_callback:
+                    progress_callback(progress_base, stage_name)
 
-            if tracker: tracker.start_stage("Synthesis")
+                if tracker: tracker.start_stage("Synthesis")
 
-            try:
-                status, output_video = synthesize_all_video_under_folder(
-                    folder, subtitles=subtitles, speed_up=speed_up, fps=fps, resolution=target_resolution,
-                    background_music=background_music, bgm_volume=bgm_volume, video_volume=video_volume, original_video_path=video_file)
-                logger.info(f'Tổng hợp video hoàn tất: {output_video}')
-                if tracker: tracker.end_stage("Synthesis")
-            except Exception as e:
-                stack_trace = traceback.format_exc()
-                error_msg = f'Tổng hợp video thất bại: {str(e)}\n{stack_trace}'
-                logger.error(error_msg)
-                return False, None, error_msg
+                try:
+                    status, output_video = synthesize_all_video_under_folder(
+                        folder, subtitles=subtitles, speed_up=speed_up, fps=fps, resolution=target_resolution,
+                        background_music=background_music, bgm_volume=bgm_volume, video_volume=video_volume, original_video_path=video_file)
+                    logger.info(f'Tổng hợp video hoàn tất: {output_video}')
+                    if tracker: tracker.end_stage("Synthesis")
+                except Exception as e:
+                    stack_trace = traceback.format_exc()
+                    error_msg = f'Tổng hợp video thất bại: {str(e)}\n{stack_trace}'
+                    logger.error(error_msg)
+                    return False, None, error_msg
+            else:
+                logger.info("Chế độ Audio Only: Bỏ qua tổng hợp video.")
+                output_video = os.path.join(folder, "audio_combined.wav")
+                if progress_callback:
+                    progress_callback(100, "Tạo âm thanh hoàn tất!")
 
             # Hoàn tất tất cả các giai đoạn
             if progress_callback:
@@ -333,7 +339,7 @@ def engine_run(root_folder='outputs', url=None, video_file=None, num_videos=1, r
                   tts_method='auto', tts_target_language='简体中文', voice=None,
                   subtitles=False, speed_up=1.00, fps=30,
                   background_music=None, bgm_volume=0.5, video_volume=1.0, target_resolution='1080p',
-                  max_workers=3, max_retries=5, progress_callback=None):
+                  max_workers=3, max_retries=5, progress_callback=None, audio_only=False):
     """
     Hàm chạy chính toàn bộ quy trình xử lý video.
 
@@ -354,6 +360,7 @@ def engine_run(root_folder='outputs', url=None, video_file=None, num_videos=1, r
         logger.info(f"Dịch thuật: Phương pháp={translation_method}, Ngôn ngữ mục tiêu={translation_target_language}")
         logger.info(f"TTS: Phương pháp={tts_method}, Ngôn ngữ={tts_target_language}, Giọng={voice}")
         logger.info(f"Tổng hợp: Phụ đề={subtitles}, Tăng tốc={speed_up}, FPS={fps}, Phân giải đầu ra={target_resolution}")
+        logger.info(f"Chế độ: {'Audio Only' if audio_only else 'Video + Audio'}")
         logger.info("-" * 50)
 
         # Khởi tạo mô hình
@@ -378,7 +385,7 @@ def engine_run(root_folder='outputs', url=None, video_file=None, num_videos=1, r
                 translation_method, translation_target_language,
                 tts_method, tts_target_language, voice,
                 subtitles, speed_up, fps, background_music, bgm_volume, video_volume,
-                target_resolution, max_retries, progress_callback, tracker
+                target_resolution, max_retries, progress_callback, tracker, audio_only=audio_only
             )
 
             if success:

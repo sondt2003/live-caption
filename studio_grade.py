@@ -14,9 +14,9 @@ def main():
     parser.add_argument("--tts_method", type=str, default="edge", help="TTS method (auto, edge, xtts, azure, openai). 'auto' uses XTTS for supported languages, EdgeTTS otherwise.")
     parser.add_argument("--voice", type=str, default=None, help="Voice name or speaker_wav path for XTTS cloning.")
     parser.add_argument("--asr_method", type=str, default="WhisperX", choices=['WhisperX', 'FunASR'], help="ASR method")
-    parser.add_argument("--hardcode_subtitles", action="store_true", help="Hardcode subtitles into video (slower)")
-    parser.add_argument("--video_volume", type=float, default=0.2, help="Background music volume")
-    parser.add_argument("--shifts", type=int, default=1, help="Demucs shifts (default 1 for speed, increase for quality)")
+    parser.add_argument("--video_volume", type=float, default=0.5, help="Background music volume")
+    parser.add_argument("--shifts", type=int, default=0, help="Demucs shifts (default 0 for speed, increase for quality)")
+    parser.add_argument("--audio_only", action="store_true", help="Only generate audio, skip video synthesis")
     args = parser.parse_args()
 
     # Test video path
@@ -41,7 +41,6 @@ def main():
         tts_target_language='vi',         # Ngôn ngữ đích cho TTS
         tts_method=args.tts_method,
         voice=args.voice,
-        subtitles=args.hardcode_subtitles,
         shifts=args.shifts,
         
         # Phương pháp ASR (Nhận diện giọng nói): 'WhisperX', 'FunASR'
@@ -58,7 +57,10 @@ def main():
         target_resolution='1080p',
         
         # Âm lượng: 1.0 là mặc định, giảm xuống để bớt dính tiếng gốc (vocal leakage)
-        video_volume=args.video_volume
+        video_volume=args.video_volume,
+        
+        # Tùy chọn chỉ xuất âm thanh
+        audio_only=args.audio_only
     )
 
     print(f"Test Status: {msg}")

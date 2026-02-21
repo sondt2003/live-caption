@@ -106,8 +106,19 @@ def generate_all_wavs_under_folder(folder, method='auto', target_language='vi', 
         
     # Timeline Pacing Logic
     current_out_end = 0.0
-    MIN_GAP = 0.1 # Minimum gap between segments in the output
-    MAX_PTS_FACTOR = 1.43 # Giới hạn giãn video (Must be <= 1.5 to stay natural)
+    
+    # Đọc cấu hình từ .env
+    from dotenv import load_dotenv
+    load_dotenv()
+    
+    # Khoảng lặng tối thiểu giữa các câu (giây).
+    # Tăng lên để giọng đọc tự nhiên hơn, giảm xuống để video nhanh hơn.
+    MIN_GAP = float(os.getenv('MIN_GAP', 0.5))
+    
+    # Giới hạn hệ số giãn nở video tối đa.
+    # 1.43 nghĩa là video chỉ được phép chậm lại tối đa 43%.
+    # Nếu quá giới hạn này, âm thanh sẽ bị tua nhanh thay vì video chậm thêm.
+    MAX_PTS_FACTOR = float(os.getenv('MAX_PTS_FACTOR', 1.43))
     
     for i, line in enumerate(transcript):
         output_path = os.path.join(output_folder, f'{str(i).zfill(4)}.wav')
