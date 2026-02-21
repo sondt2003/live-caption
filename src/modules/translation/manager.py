@@ -130,9 +130,9 @@ def _translate(summary, transcript, target_language, method):
     is_traditional = method.lower() in ['google', 'bing']
     # Traditional engines are sensitive to total character count including tags
     # and number of segments. 1000 chars and 50 segments is a very safe limit.
-    # For LLMs, we reduce batch size significantly for better focus (Ref: Chinese translation issues)
-    max_chars = 1000 if is_traditional else 300
-    max_segments = 50 if is_traditional else 15
+    # For LLMs, we reduce batch size extremely for absolute reliability
+    max_chars = 1000 if is_traditional else 150
+    max_segments = 50 if is_traditional else 10
     
     batches = []
     curr_batch = []
@@ -162,10 +162,10 @@ def _translate(summary, transcript, target_language, method):
         if is_json_method:
             system_prompt = f"Translate the following subtitles to {target_language}. Context: {summary}. \n" \
                             f"Rules:\n" \
-                            f"1. Use natural spoken Vietnamese (I='mình', You='các bạn').\n" \
-                            f"2. Return STRICT JSON: {{ \"0\": \"translation\", \"1\": \"translation\" }}. Replace the numeric keys with the actual IDs provided.\n" \
-                            f"3. Maintain original meaning but make it sound like a Vlog.\n" \
-                            f"4. Do not include any text other than the JSON object."
+                            f"1. Return ONLY the translated text in the required JSON format. ZERO Chinese characters allowed in output.\n" \
+                            f"2. Use natural spoken Vietnamese (I='mình', You='các bạn', Vlog style).\n" \
+                            f"3. Return STRICT JSON: {{ \"0\": \"translation\", \"1\": \"translation\" }}. Replace the numeric keys with the actual IDs provided.\n" \
+                            f"4. If a segment is untranslatable, translate it literally but NEVER leave it as Chinese."
             
             user_content = json.dumps(batch, ensure_ascii=False)
             messages = [
@@ -251,14 +251,15 @@ def _translate(summary, transcript, target_language, method):
     # Final individual retry for any segments still missing or failed
     for i, seg in enumerate(transcript):
         if all_translations[i] is None:
-            text = seg['text']
+            text = clean_chinese_text(seg['text'])
             # Clean Chinese text before individual retry
             text = clean_chinese_text(text)
             
             logger.info(f"Retrying individual translation for segment {i}: {text[:50]}...")
             try:
-                s_prompt = f"Translate the following text to {target_language}. Context: {summary}. Return ONLY the translation text."
-                msgs = [{"role": "system", "content": s_prompt}, {"role": "user", "content": text}]
+                # Use a more aggressive literal prompt for individual retry
+                s_prompt = f"Translate this Chinese text to {target_language}. NO EXPLANATION. NO CHINESE IN OUTPUT. MUST BE VIETNAMESE. Text: {text}"
+                msgs = [{"role": "user", "content": s_prompt}]
                 res = translator.translate(msgs, json_mode=False)
                 
                 if res and is_translated(text, res, target_language):
