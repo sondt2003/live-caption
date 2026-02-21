@@ -26,6 +26,12 @@ class TTSFactory:
             elif 'azure' in method_lower:
                 from .providers.azure import AzureTTSProvider
                 TTSFactory._instances[method_lower] = AzureTTSProvider()
+            elif 'elevenlabs' in method_lower or 'ai33' in method_lower:
+                from .providers.elevenlabs import ElevenLabsProvider
+                TTSFactory._instances[method_lower] = ElevenLabsProvider()
+            elif 'minimax' in method_lower:
+                from .providers.minimax import MinimaxProvider
+                TTSFactory._instances[method_lower] = MinimaxProvider()
             else:
                 # Fallback to EdgeTTS
                 logger.warning(f"Unknown TTS method {method}, falling back to EdgeTTS")

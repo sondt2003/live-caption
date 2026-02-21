@@ -11,16 +11,17 @@ import argparse
 
 def main():
     parser = argparse.ArgumentParser(description="Studio-Grade Pipeline Test")
-    parser.add_argument("--tts_method", type=str, default="edge", help="TTS method (auto, edge, xtts, azure, openai). 'auto' uses XTTS for supported languages, EdgeTTS otherwise.")
+    parser.add_argument("--tts_method", type=str, default="edge", help="TTS method (auto, edge, xtts, azure, openai, elevenlabs, minimax). 'auto' uses XTTS for supported languages, EdgeTTS otherwise.")
     parser.add_argument("--voice", type=str, default=None, help="Voice name or speaker_wav path for XTTS cloning.")
     parser.add_argument("--asr_method", type=str, default="WhisperX", choices=['WhisperX', 'FunASR'], help="ASR method")
     parser.add_argument("--video_volume", type=float, default=0.5, help="Background music volume")
     parser.add_argument("--shifts", type=int, default=0, help="Demucs shifts (default 0 for speed, increase for quality)")
+    parser.add_argument("--video_file", type=str, required=True, help="Path to input video file")
     parser.add_argument("--audio_only", action="store_true", help="Only generate audio, skip video synthesis")
     args = parser.parse_args()
 
     # Test video path
-    video_path = "/home/dangson/workspace/live-caption/video/video-5.mp4"
+    video_path = args.video_file
     output_dir = "outputs"
 
     if os.path.exists(output_dir):

@@ -67,7 +67,8 @@ class EdgeTTSProvider(BaseTTS):
         for retry in range(3):
             try:
                 # Use --rate if provided (not implemented yet but good for future)
-                cmd = [self.edge_tts_path, '--text', text, '--write-media', mp3_path, '--voice', voice]
+                # Use python -m edge_tts to be safe across environments
+                cmd = [sys.executable, '-m', 'edge_tts', '--text', text, '--write-media', mp3_path, '--voice', voice]
                 
                 result = subprocess.run(
                     cmd,

@@ -132,6 +132,11 @@ def process_video(video_file, root_folder, resolution,
             # Sử dụng root_folder/vidhash làm thư mục xử lý
             # Sử dụng tên video gốc để tạo thư mục dự án (giúp gom nhóm chuyên nghiệp)
             base_name = os.path.splitext(os.path.basename(video_file))[0]
+            # Check if video file exists
+            if not os.path.exists(video_file):
+                logger.error(f"Video file not found: {video_file}")
+                return False, None, f"Video file not found: {video_file}"
+
             # Strip UUID prefix if present (e.g., 6db1bbbe-8c06-426a-9174-0ec4e217579d_video3.mp4)
             if len(base_name) > 37 and base_name[36] == '_':
                 try:
@@ -298,23 +303,6 @@ def process_video(video_file, root_folder, resolution,
             if tracker:
                 tracker.finalize()
                 tracker.save_stats(os.path.join(folder, "timing_stats.json"))
-            
-            # Dọn dẹp siêu sạch (Ultra-Clean Cleanup) sau khi thành công
-            logger.info("Đang thực hiện dọn dẹp các tệp trung gian... (Tạm vô hiệu hóa để debug)")
-            # clean_files = [
-            #     'audio_vocals.wav', 'audio_vocals_dereverb.wav',
-            #     'audio_instruments.wav', 'audio_tts.wav', 'audio_combined.wav',
-            #     'transcript.json', 'summary.json', 'timing_stats.json'
-            # ]
-            # for f in clean_files:
-            #     fpath = os.path.join(folder, f)
-            #     if os.path.exists(fpath):
-            #         os.remove(fpath)
-            
-            # Xóa thư mục SPEAKER nếu có
-            # speaker_dir = os.path.join(folder, 'SPEAKER')
-            # if os.path.exists(speaker_dir):
-            #     shutil.rmtree(speaker_dir)
             
             logger.info("Dọn dẹp hoàn tất. Chỉ giữ lại Video, Subtitles và Translation JSON.")
                 
