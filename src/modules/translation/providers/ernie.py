@@ -18,7 +18,7 @@ class ErnieTranslator(BaseTranslator):
         else:
             raise Exception("Failed to get Baidu access token")
 
-    def translate(self, messages: list) -> str:
+    def translate(self, messages: list, json_mode: bool = True) -> str:
         if self.access_token is None:
             self.access_token = self._get_access_token()
         

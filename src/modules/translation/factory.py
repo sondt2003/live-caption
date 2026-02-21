@@ -4,6 +4,7 @@ from .providers.ernie import ErnieTranslator
 from .providers.google import GoogleTranslator
 from .providers.groq_api import GroqTranslator
 from .providers.llm import LocalLLMTranslator
+from .providers.gemini import GeminiTranslator
 
 class TranslatorFactory:
     @staticmethod
@@ -16,6 +17,8 @@ class TranslatorFactory:
             return QwenTranslator()
         elif 'ernie' in method_lower or 'baidu' in method_lower:
             return ErnieTranslator()
+        elif 'gemini' in method_lower:
+            return GeminiTranslator()
         elif 'google' in method_lower:
             return GoogleTranslator(target_language=target_language, server='google')
         elif 'groq' in method_lower:

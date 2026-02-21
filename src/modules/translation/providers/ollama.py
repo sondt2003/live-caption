@@ -10,7 +10,7 @@ class OllamaTranslator(BaseTranslator):
         self.base_url = os.getenv('OLLAMA_API_BASE', 'http://localhost:11434/api')
         self.url = f"{self.base_url}/chat"
 
-    def translate(self, messages: list) -> str:
+    def translate(self, messages: list, json_mode: bool = True) -> str:
         payload = {
             "model": self.model_name,
             "messages": messages,

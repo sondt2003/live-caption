@@ -13,7 +13,7 @@ class QwenTranslator(BaseTranslator):
             'repetition_penalty': 1.1,
         }
 
-    def translate(self, messages: list) -> str:
+    def translate(self, messages: list, json_mode: bool = True) -> str:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"

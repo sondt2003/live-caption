@@ -28,7 +28,7 @@ class LocalLLMTranslator(BaseTranslator):
         self.tokenizer = AutoTokenizer.from_pretrained(pretrained_path)
         logger.info('Finish Load model')
 
-    def translate(self, messages: list) -> str:
+    def translate(self, messages: list, json_mode: bool = True) -> str:
         self._init_model()
         
         text = self.tokenizer.apply_chat_template(

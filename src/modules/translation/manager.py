@@ -79,9 +79,18 @@ def _translate(summary, transcript, target_language, method):
                     response_json = response_json.split("```")[1].split("```")[0].strip()
                 
                 batch_trans = json.loads(response_json)
-                for item in batch:
-                    idx = item['id']
-                    all_translations[idx] = batch_trans.get(str(idx), item['text'])
+                if isinstance(batch_trans, list):
+                    # Handle Google/Bing returning a list of dicts [{"id": 0, "text": "trans"}, ...]
+                    for item_trans in batch_trans:
+                        it_id = item_trans.get('id')
+                        it_text = item_trans.get('text')
+                        if it_id is not None:
+                            all_translations[int(it_id)] = it_text
+                else:
+                    # Handle LLM returning a dict { "0": "trans", "1": "trans", ... }
+                    for item in batch:
+                        idx = item['id']
+                        all_translations[idx] = batch_trans.get(str(idx), item['text'])
             except Exception as e:
                 logger.warning(f"Failed to parse batch json. Retrying individually... Error: {e}")
                 # Fallback: Translate individually

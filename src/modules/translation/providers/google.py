@@ -24,7 +24,7 @@ class GoogleTranslator(BaseTranslator):
     def _normalize_lang(self, lang):
         return self.lang_map.get(lang.lower(), lang)
 
-    def translate(self, messages: list) -> str:
+    def translate(self, messages: list, json_mode: bool = True) -> str:
         # Google/Bing translate works with raw text, not messages list
         # Extract content from the last user message
         text = ""
@@ -43,16 +43,25 @@ class GoogleTranslator(BaseTranslator):
 
         to_lang = self._normalize_lang(self.target_language)
         
-        for retry in range(3):
-            try:
-                translation = ts.translate_text(
-                    query_text=text, 
-                    translator=self.server, 
-                    from_language='auto', 
-                    to_language=to_lang
-                )
-                return translation
-            except Exception as e:
-                logger.warning(f"{self.server.capitalize()} Translation failed (retry {retry}): {e}")
+        # Primary server
+        servers = [self.server]
+        if self.server == 'google':
+             servers.append('bing')
+        elif self.server == 'bing':
+             servers.append('google')
+        
+        for srv in servers:
+            for retry in range(2):
+                try:
+                    translation = ts.translate_text(
+                        query_text=text, 
+                        translator=srv, 
+                        from_language='auto', 
+                        to_language=to_lang
+                    )
+                    if translation:
+                        return translation
+                except Exception as e:
+                    logger.warning(f"{srv.capitalize()} Translation failed (retry {retry}): {e}")
         
         return ""

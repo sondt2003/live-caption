@@ -25,18 +25,26 @@ def main():
     parser = argparse.ArgumentParser(description='Studio Grade Video Dubbing')
     parser.add_argument('--video_file', type=str, required=True, help='Path to video file')
     parser.add_argument('--output_dir', type=str, default='outputs', help='Output directory')
+   
     parser.add_argument('--separator_model', type=str, default='UVR-MDX-NET-Inst_HQ_3.onnx', help='Separator model')
+  
     parser.add_argument('--whisper_model', type=str, default='small', help='Whisper model size')
     parser.add_argument('--batch_size', type=int, default=4, help='Whisper batch size')
+  
     parser.add_argument('--diarization', action='store_true', help='Enable speaker diarization')
+   
     parser.add_argument('--target_resolution', type=str, default='original', help='Target resolution')
+    
     parser.add_argument('--video_volume', type=float, default=1.0, help='Original video volume')
+ 
     parser.add_argument('--audio_only', action='store_true', help='Only generate audio')
-    parser.add_argument('--language', type=str, default=None, help='Original language (None for Auto)')
+  
     parser.add_argument('--asr_method', type=str, default='google', choices=['google', 'whisperx'], help='ASR method')
     parser.add_argument('--google_api_key', type=str, default=None, help='Google Speech API Key (v2)')
     parser.add_argument('--groq_api_key', type=str, default=None, help='Groq API Key for translation')
-    parser.add_argument('--translation_method', type=str, default='google', choices=['google', 'groq', 'baidu', 'ollama', 'llm'], help='Translation method to use')
+  
+    parser.add_argument('--language', type=str, default=None, help='Original language (None for Auto)')
+    parser.add_argument('--translation_method', type=str, default='google', choices=['google', 'groq', 'baidu', 'ollama', 'llm', 'gemini'], help='Translation method to use')
     parser.add_argument('--target_language', type=str, default='vi', help='Target language code')
 
     args = parser.parse_args()
