@@ -38,7 +38,6 @@ overrides==7.7.0
 # ==========================================
 # Audio & Video Processing
 # ==========================================
-audio-separator
 onnxruntime-gpu
 librosa
 scipy

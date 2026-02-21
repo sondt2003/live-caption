@@ -13,6 +13,47 @@ from src.utils.utils import save_wav
 
 load_dotenv()
 
+def _split_by_word_gap(aligned_segments: list, gap_threshold: float = 0.4) -> list:
+    """
+    Split aligned segments at word gaps > gap_threshold seconds.
+    Mimics WhisperX sentence boundary detection using word-level timestamps
+    from wx.align() — where WhisperX uses Whisper punctuation, we use silence gaps.
+    """
+    result = []
+    for seg in aligned_segments:
+        words = seg.get('words', [])
+        if not words:
+            # No word timestamps — keep segment as-is
+            result.append({
+                'start': seg['start'], 'end': seg['end'],
+                'text': seg['text'].strip(), 'speaker': 'SPEAKER_00'
+            })
+            continue
+
+        # Group words by gap
+        groups = []
+        curr_words = [words[0]]
+        for w in words[1:]:
+            prev_end = curr_words[-1].get('end', curr_words[-1].get('start', 0))
+            curr_start = w.get('start', prev_end)
+            if curr_start - prev_end >= gap_threshold:
+                groups.append(curr_words)
+                curr_words = [w]
+            else:
+                curr_words.append(w)
+        groups.append(curr_words)
+
+        for grp in groups:
+            grp_start = grp[0].get('start', seg['start'])
+            grp_end = grp[-1].get('end', seg['end'])
+            grp_text = ' '.join(w.get('word', '') for w in grp).strip()
+            if grp_text:
+                result.append({
+                    'start': grp_start, 'end': grp_end,
+                    'text': grp_text, 'speaker': 'SPEAKER_00'
+                })
+    return result
+
 def merge_segments(transcript, ending='!"\').:;?]}~！“”’）。：；？】'):
     merged = []
     buf = None
@@ -80,8 +121,12 @@ def transcribe_audio(folder, model_name='large', download_root='models/ASR/whisp
         aln, meta = wx.load_align_model(language_code=language, device=device, model_dir=download_root)
         if aln:
             res = wx.align(segs, aln, meta, audio, device, return_char_alignments=False)
-            transcript = [{'start': s['start'], 'end': s['end'], 'text': s['text'].strip(), 'speaker': 'SPEAKER_00'} for s in res['segments']]
-        else: transcript = raw
+            # Split aligned segments by word gap — mimics WhisperX natural sentence detection.
+            # WhisperX uses punctuation from Whisper model; Google ASR uses silence between words.
+            word_gap_threshold = float(os.getenv('GOOGLE_WORD_GAP_SPLIT', 0.8))
+            transcript = _split_by_word_gap(res['segments'], word_gap_threshold)
+        else:
+            transcript = raw
         audio_data = audio
     else:
         logger.info(f"Using WhisperX ASR for language: {language}")

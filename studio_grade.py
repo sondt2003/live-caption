@@ -35,7 +35,7 @@ def main():
    
     parser.add_argument('--target_resolution', type=str, default='original', help='Target resolution')
     
-    parser.add_argument('--video_volume', type=float, default=1.0, help='Original video volume')
+    parser.add_argument('--video_volume', type=float, default=0.6, help='Original video volume')
  
     parser.add_argument('--audio_only', action='store_true', help='Only generate audio')
   
