@@ -6,10 +6,32 @@ import shutil
 import numpy as np
 import pyloudnorm as pyln
 from loguru import logger
-from audiostretchy.stretch import stretch_audio
-
+import subprocess
 from utils.utils import save_wav, save_wav_norm
 from .factory import TTSFactory
+
+def stretch_audio_ffmpeg(input_path, output_path, rate, sample_rate=24000):
+    """Sử dụng FFmpeg atempo để thay đổi tốc độ âm thanh với chất lượng cao hơn librosa."""
+    # atempo chỉ hỗ trợ 0.5 đến 2.0. Phải nối chuỗi nếu ngoài khoảng này.
+    filters = []
+    temp_rate = rate
+    while temp_rate > 2.0:
+        filters.append("atempo=2.0")
+        temp_rate /= 2.0
+    while temp_rate < 0.5:
+        filters.append("atempo=0.5")
+        temp_rate /= 0.5
+    filters.append(f"atempo={temp_rate:.4f}")
+    
+    filter_str = ",".join(filters)
+    cmd = [
+        'ffmpeg', '-i', input_path,
+        '-filter:a', filter_str,
+        '-ar', str(sample_rate),
+        '-ac', '1',
+        output_path, '-y'
+    ]
+    subprocess.run(cmd, capture_output=True)
 
 def preprocess_text(text, target_language='vi'):
     if 'zh-cn' in target_language.lower():
@@ -23,25 +45,121 @@ def preprocess_text(text, target_language='vi'):
         text = re.sub(r'\s+', ' ', text).strip()
     return text
 
+class VoiceMapper:
+    def __init__(self, target_language='vi', default_voice='vi-VN-HoaiMyNeural'):
+        self.target_language = target_language.lower()
+        self.default_voice = default_voice
+        self.mapping = self._load_mapping()
+        self.speaker_cache = {}
+        
+        # Default pools (mostly for Edge TTS)
+        self.pools = {
+            'vi': {
+                'male': 'vi-VN-NamMinhNeural',
+                'female': 'vi-VN-HoaiMyNeural'
+            },
+            'zh-cn': {
+                'male': 'zh-CN-YunxiNeural',
+                'female': 'zh-CN-XiaoxiaoNeural'
+            },
+            'en': {
+                'male': 'en-US-GuyNeural',
+                'female': 'en-US-AriaNeural'
+            }
+        }
+        
+    def _load_mapping(self):
+        mapping_str = os.getenv("VOICE_MAPPING", "")
+        mapping = {}
+        if mapping_str:
+            for item in mapping_str.split(","):
+                if ":" in item:
+                    k, v = item.split(":", 1)
+                    mapping[k.strip()] = v.strip()
+        return mapping
+
+    def get_voice(self, speaker_id, text=""):
+        # 1. Ưu tiên mapping cứng từ .env
+        if speaker_id in self.mapping:
+            return self.mapping[speaker_id]
+        
+        # 2. Nếu đã gán cho speaker này rồi thì dùng lại
+        if speaker_id in self.speaker_cache:
+            return self.speaker_cache[speaker_id]
+
+        # 3. Phán đoán giới tính dựa trên đại từ (Tiếng Việt)
+        lang_key = 'vi' if 'vi' in self.target_language else ('zh-cn' if 'zh' in self.target_language else 'en')
+        pool = self.pools.get(lang_key, self.pools['en'])
+
+        if lang_key == 'vi':
+            male_keywords = ['anh', 'ông', 'chú', 'bác', 'cậu', 'ngài', 'nam']
+            female_keywords = ['chị', 'bà', 'cô', 'dì', 'mợ', 'nữ']
+            
+            text_lower = text.lower()
+            male_score = sum(1 for k in male_keywords if re.search(fr'\b{k}\b', text_lower))
+            female_score = sum(1 for k in female_keywords if re.search(fr'\b{k}\b', text_lower))
+            
+            if male_score > female_score:
+                self.speaker_cache[speaker_id] = pool['male']
+                return pool['male']
+            elif female_score > male_score:
+                self.speaker_cache[speaker_id] = pool['female']
+                return pool['female']
+
+        # 4. Tự động xen kẽ nếu có nhiều speaker (SPEAKER_00, 01...)
+        try:
+            nums = re.findall(r'\d+', speaker_id)
+            idx = int(nums[0]) if nums else len(self.speaker_cache)
+        except:
+            idx = len(self.speaker_cache)
+            
+        if idx % 2 == 1:
+            # Nếu speaker lẻ, đổi sang giọng khác với mặc định
+            voice = pool['male'] if self.default_voice == pool['female'] else pool['female']
+        else:
+            voice = self.default_voice
+            
+        self.speaker_cache[speaker_id] = voice
+        return voice
+
 def adjust_audio_length(wav_path, desired_length, sample_rate=24000, min_speed_factor=0.5, max_speed_factor=1.35):
     try:
-        # Load to check length
+        # Load directly to numpy for manipulation
         wav_orig, _ = librosa.load(wav_path, sr=sample_rate)
-        current_length = len(wav_orig)/sample_rate
+        current_length = len(wav_orig) / sample_rate
     except Exception as e:
         logger.warning(f"Audio load failed, returning silence: {e}")
         return np.zeros((int(desired_length * sample_rate), )), desired_length
+
+    # CASE 1: Audio is shorter (Needs lengthening) -> Pad with silence
+    if current_length < desired_length:
+        gap = desired_length - current_length
+        padding = np.zeros((int(gap * sample_rate), ))
+        wav_final = np.concatenate((wav_orig, padding))
+        return wav_final, desired_length
+
+    # CASE 2: Audio is longer (Needs shortening) -> Stretch (speed up)
+    ratio = desired_length / current_length
+    final_ratio = max(ratio, min_speed_factor)
     
-    speed_factor = max(min(desired_length / current_length, max_speed_factor), min_speed_factor)
-    
-    target_path = wav_path.replace('.wav', '_adjusted.wav').replace('.mp3', '_adjusted.wav')
-    stretch_audio(wav_path, target_path, ratio=speed_factor, sample_rate=sample_rate)
-    
-    # Load the actual stretched audio
-    wav, _ = librosa.load(target_path, sr=sample_rate)
-    actual_duration = len(wav) / sample_rate
-    
-    return wav, actual_duration
+    try:
+        # FFmpeg expects rate (1/final_ratio). rate > 1.0 speeds up.
+        rate = 1.0 / final_ratio
+        target_path = wav_path.replace('.wav', '_stretched.wav')
+        stretch_audio_ffmpeg(wav_path, target_path, rate, sample_rate=sample_rate)
+        
+        if os.path.exists(target_path):
+            wav_final, _ = librosa.load(target_path, sr=sample_rate)
+        else:
+            raise Exception("FFmpeg failed to generate stretched audio")
+            
+    except Exception as ex:
+        logger.error(f"Time stretch failed: {ex}. Using original.")
+        # Crop as fallback
+        wav_final = wav_orig[:int(desired_length * sample_rate)]
+
+    actual_duration = len(wav_final) / sample_rate
+    return wav_final, actual_duration
 
 def generate_all_wavs_under_folder(folder, method='auto', target_language='vi', voice='vi-VN-HoaiMyNeural', video_volume=1.0):
     transcript_path = os.path.join(folder, 'translation.json')
@@ -60,6 +178,8 @@ def generate_all_wavs_under_folder(folder, method='auto', target_language='vi', 
     else:
         engine = TTSFactory.get_tts_engine(method)
 
+    # 1. Initialize VoiceMapper
+    voice_mapper = VoiceMapper(target_language=target_language, default_voice=voice)
     
     # Collect all tasks for batch processing
     tasks = []
@@ -82,7 +202,7 @@ def generate_all_wavs_under_folder(folder, method='auto', target_language='vi', 
             "speaker_wav": speaker_wav,
             "ref_text": None, # Skip ref_text to avoid alignment issues/token overflow
             "target_language": target_language,
-            "voice": voice
+            "voice": voice_mapper.get_voice(speaker, text)
         })
 
     # Gọi Engine để tạo âm thanh hàng loạt (Batch Processing)
@@ -95,13 +215,14 @@ def generate_all_wavs_under_folder(folder, method='auto', target_language='vi', 
 
     full_wav = np.zeros((0, ))
     for i, line in enumerate(transcript):
-        output_path = os.path.join(output_folder, f'{str(i).zfill(4)}.wav')
-        start, end = line['start'], line['end']
-        # Backup original timings for visual sync
-        line['original_start'] = start
-        line['original_end'] = end
+        # Backup original timings (STABLE REFERENCE)
+        # Chỉ backup nếu chưa có (tránh việc lặp lại làm hỏng timings gốc)
+        if 'original_start' not in line:
+            line['original_start'] = line.get('start', 0.0)
+        if 'original_end' not in line:
+            line['original_end'] = line.get('end', 0.0)
         
-        length = end - start
+        output_path = os.path.join(output_folder, f'{str(i).zfill(4)}.wav')
         last_end = len(full_wav)/24000
         
     # Timeline Pacing Logic
@@ -113,7 +234,7 @@ def generate_all_wavs_under_folder(folder, method='auto', target_language='vi', 
     
     # Khoảng lặng tối thiểu giữa các câu (giây).
     # Tăng lên để giọng đọc tự nhiên hơn, giảm xuống để video nhanh hơn.
-    MIN_GAP = float(os.getenv('MIN_GAP', 0.5))
+    MIN_GAP = float(os.getenv('MIN_GAP', 0))
     
     # Giới hạn hệ số giãn nở video tối đa.
     # 1.43 nghĩa là video chỉ được phép chậm lại tối đa 43%.
@@ -142,21 +263,34 @@ def generate_all_wavs_under_folder(folder, method='auto', target_language='vi', 
             raw_vox, _ = librosa.load(output_path, sr=24000)
             raw_dur = len(raw_vox) / 24000
             
-            # CƠ CHẾ ĐỒNG BỘ CỨNG:
-            # Không được để đoạn audio dài hơn độ giãn video tối đa (1.43x)
-            max_dur_allowed = orig_dur * MAX_PTS_FACTOR
+            # PHYSICAL VIDEO LIMIT: A video segment cannot stretch more than 1.43x.
+            # Thus, audio SHOULD NOT be longer than orig_dur * 1.43.
+            max_seg_allowed = orig_dur * MAX_PTS_FACTOR
             
-            # Nếu bản dịch quá dài, ta phải ép nó ngắn lại cho vừa max_dur_allowed
-            # Nếu bản dịch ngắn hơn, ta cố gắng khớp vào orig_dur hoặc available_dur
-            stretch_to_raw = min(max_dur_allowed, max(orig_dur, raw_dur))
+            # ABSOLUTE DEADLINE: Audio must finish before this point to keep entire video in sync.
+            max_end_allowed = orig_end * MAX_PTS_FACTOR
             
-            # Nếu chúng ta đang bị chậm (target_start > orig_start), 
-            # chúng ta có ít "không gian" hơn để giãn video.
-            available_dur = max(0.5, (orig_end * MAX_PTS_FACTOR) - target_start)
-            stretch_to = min(stretch_to_raw, available_dur)
+            # 1. Ideal Target: Finish at original English time (Real-time sync)
+            ideal_dur = max(0.2, orig_end - target_start)
             
-            # Thực hiện co giãn audio
-            wav, adjusted_len = adjust_audio_length(output_path, stretch_to)
+            # 2. Hard Limit: Cannot exceed physical video stretch
+            hard_limit_dur = max(0.2, min(max_seg_allowed, max_end_allowed - target_start))
+            
+            # 3. Decision: Use ideal if it doesn't require extreme compression, else use hard limit
+            needed_ratio_to_ideal = ideal_dur / raw_dur if raw_dur > 0 else 1.0
+            
+            if needed_ratio_to_ideal >= 0.6: # If < 1.6x speedup is enough to catch up
+                stretch_to = ideal_dur
+                logger.debug(f"Segment {i}: Catch-up target (Ideal: {ideal_dur:.2f}s)")
+            else:
+                # Catching up is too hard, at least try to stay within the 1.43x video limit
+                stretch_to = hard_limit_dur
+                logger.debug(f"Segment {i}: Video-limit target (Max: {hard_limit_dur:.2f}s)")
+
+            # We allow compression up to 4x (0.25) to fit these strict limits
+            local_min_speed_factor = 0.25
+            
+            wav, adjusted_len = adjust_audio_length(output_path, stretch_to, min_speed_factor=local_min_speed_factor)
             line['source_duration'] = orig_dur
         else:
             logger.warning(f"Segment {i}: Output path {output_path} not found. Filling with silence.")
@@ -185,7 +319,34 @@ def generate_all_wavs_under_folder(folder, method='auto', target_language='vi', 
     except Exception as e:
         logger.warning(f"Mastering thất bại: {e}")
 
-    save_wav(full_wav, os.path.join(folder, 'audio_tts.wav'))
+    # ĐỒNG BỘ ĐỘ DÀI: Đảm bảo âm thanh dài bằng video (bao gồm cả đoạn 'tail')
+    try:
+        # Tìm metadata video để lấy thời lượng gốc
+        # Chúng ta giả định audio_instruments.wav hoặc audio_vocals.wav có thời lượng bằng video gốc
+        orig_audio_path = os.path.join(folder, 'audio_instruments.wav')
+        if not os.path.exists(orig_audio_path):
+            orig_audio_path = os.path.join(folder, 'audio_vocals.wav')
+            
+        if os.path.exists(orig_audio_path):
+            orig_total_dur = librosa.get_duration(path=orig_audio_path)
+            # Theo logic video.py: final_v_dur = last_target_end + (orig_total_dur - last_orig_end)
+            if transcript:
+                last_line = transcript[-1]
+                last_orig_end = last_line['original_end']
+                last_target_end = last_line['end']
+                
+                final_v_dur = last_target_end + max(0, orig_total_dur - last_orig_end)
+                current_audio_dur = len(full_wav) / 24000
+                
+                if final_v_dur > current_audio_dur:
+                    padding_len = int((final_v_dur - current_audio_dur) * 24000)
+                    full_wav = np.concatenate([full_wav, np.zeros(padding_len)])
+                    logger.info(f"Đã thêm {final_v_dur - current_audio_dur:.2f}s khoảng lặng vào cuối để khớp với video.")
+
+    except Exception as e:
+        logger.warning(f"Không thể đồng bộ độ dài audio với video: {e}")
+
+    save_wav_norm(full_wav, os.path.join(folder, 'audio_tts.wav'))
     
     # Dọn dẹp các tệp tạm để tiết kiệm không gian
     try:
