@@ -1,5 +1,4 @@
 import shutil
-from demucs.api import Separator
 import os
 from loguru import logger
 import time
@@ -9,172 +8,91 @@ import gc
 
 # Biến toàn cục
 auto_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-separator = None
-model_loaded = False  # Cờ theo dõi trạng thái tải model
-current_model_config = {}  # Biến lưu cấu hình model hiện tại
+mdx_separator = None
 
+def get_mdx_separator(model_name="UVR-MDX-NET-Inst_HQ_3.onnx", output_dir="."):
+    """Khởi tạo hoặc trả về instance Audio-Separator (MDX-Net)"""
+    global mdx_separator
+    try:
+        from audio_separator.separator import Separator
+        if mdx_separator is None:
+            logger.info(f"Khởi tạo Audio-Separator với model: {model_name}")
+            mdx_separator = Separator(
+                output_dir=output_dir,
+                output_format="wav",
+                normalization_threshold=0.9,
+                sample_rate=48000 # Khớp với DeepFilterNet
+            )
+            mdx_separator.load_model(model_name)
+        return mdx_separator
+    except ImportError:
+        logger.error("Thư viện 'audio-separator' chưa được cài đặt. Vui lòng cài đặt: pip install audio-separator[gpu]")
+        return None
+    except Exception as e:
+        logger.error(f"Lỗi khởi tạo Audio-Separator: {e}")
+        return None
 
-def init_demucs():
+def separate_audio(folder: str, model_name: str = "UVR-MDX-NET-Inst_HQ_3.onnx", device: str = 'auto', progress: bool = True,
+                   shifts: int = 0) -> None:
     """
-    Khởi tạo mô hình Demucs.
-    Nếu mô hình đã được khởi tạo, trả về ngay mà không tải lại.
+    Tách âm thanh bằng MDX-Net (Audio-Separator).
     """
-    global separator, model_loaded
-    if not model_loaded:
-        separator = load_model()
-        model_loaded = True
-    else:
-        logger.info("Mô hình Demucs đã được tải, bỏ qua khởi tạo")
+    audio_path = os.path.join(folder, 'audio.wav')
+    if not os.path.exists(audio_path):
+        return None, None
+        
+    vocal_output_path = os.path.join(folder, 'audio_vocals.wav')
+    instruments_output_path = os.path.join(folder, 'audio_instruments.wav')
 
+    if os.path.exists(vocal_output_path) and os.path.exists(instruments_output_path):
+        logger.info(f"Đã có file tách âm thanh: {folder}")
+        return vocal_output_path, instruments_output_path
 
-def load_model(model_name: str = "htdemucs_ft", device: str = 'auto', progress: bool = True,
-               shifts: int = 1) -> Separator:
-    """
-    Tải mô hình Demucs.
-    Nếu mô hình cùng cấu hình đã được tải, sử dụng lại mô hình hiện có.
-    """
-    global separator, model_loaded, current_model_config
-
-    if separator is not None:
-        # 检查是否需要重新加载模型（配置不同）
-        requested_config = {
-            'model_name': model_name,
-            'device': 'auto' if device == 'auto' else device,
-            'shifts': shifts
-        }
-
-        if current_model_config == requested_config:
-            logger.info(f'Mô hình Demucs đã tải và cùng cấu hình, tái sử dụng')
-            return separator
-        else:
-            logger.info(f'Cấu hình Demucs thay đổi, cần tải lại')
-            # Giải phóng tài nguyên mô hình hiện tại
-            release_model()
-
-    logger.info(f'Đang tải mô hình Demucs: {model_name}')
+    logger.info(f"Sử dụng MDX-Net để tách âm thanh: {folder}")
     t_start = time.time()
+    
+    sep = get_mdx_separator(model_name, output_dir=folder)
+    if sep is None:
+        raise Exception("Không thể khởi tạo MDX Separator. Đảm bảo đã cài đặt audio-separator.")
 
-    device_to_use = auto_device if device == 'auto' else device
-    separator = Separator(model_name, device=device_to_use, progress=progress, shifts=shifts)
-
-    # Lưu cấu hình model hiện tại
-    current_model_config = {
-        'model_name': model_name,
-        'device': 'auto' if device == 'auto' else device,
-        'shifts': shifts
-    }
-
-    model_loaded = True
+    # Tiến hành tách
+    output_files = sep.separate(audio_path)
+    
+    # MDX-Net Inst_HQ_3 thường tạo ra 2 file: Instrumental và Vocals
+    for file_path in output_files:
+        filename = os.path.basename(file_path)
+        if "Vocals" in filename:
+            shutil.move(os.path.join(folder, filename), vocal_output_path)
+        elif "Instrumental" in filename:
+            shutil.move(os.path.join(folder, filename), instruments_output_path)
+    
     t_end = time.time()
-    logger.info(f'Tải mô hình Demucs hoàn tất trong {t_end - t_start:.2f} giây')
-
-    return separator
-
+    logger.info(f"Tách âm thanh hoàn tất trong {t_end - t_start:.2f}s")
+    
+    # Xóa file gốc để tiết kiệm dung lượng
+    try:
+        os.remove(audio_path)
+        logger.info(f'Đã xóa file gốc: {audio_path}')
+    except:
+        pass
+        
+    return vocal_output_path, instruments_output_path
 
 def release_model():
     """
-    Giải phóng tài nguyên mô hình, tránh rò rỉ bộ nhớ
+    Giải phóng tài nguyên MDX Separator
     """
-    global separator, model_loaded, current_model_config
-
-    if separator is not None:
-        logger.info('Đang giải phóng tài nguyên mô hình Demucs...')
-        # Xóa tham chiếu
-        separator = None
-        # Bắt buộc thu gom rác
+    global mdx_separator
+    if mdx_separator is not None:
+        logger.info('Đang giải phóng tài nguyên MDX Separator...')
+        mdx_separator = None
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        model_loaded = False
-        current_model_config = {}
-        logger.info('Đã giải phóng tài nguyên mô hình Demucs')
-
-
-def separate_audio(folder: str, model_name: str = "htdemucs_ft", device: str = 'auto', progress: bool = True,
-                   shifts: int = 1) -> None:
-    """
-    Tách file âm thanh
-    """
-    global separator
-    audio_path = os.path.join(folder, 'audio.wav')
-    if not os.path.exists(audio_path):
-        return None, None
-    vocal_output_path = os.path.join(folder, 'audio_vocals.wav')
-    instruments_output_path = os.path.join(folder, 'audio_instruments.wav')
-    # Đường dẫn cho 4-stem
-    drums_output_path = os.path.join(folder, 'audio_drums.wav')
-    bass_output_path = os.path.join(folder, 'audio_bass.wav')
-    other_output_path = os.path.join(folder, 'audio_other.wav')
-
-    if os.path.exists(vocal_output_path) and os.path.exists(instruments_output_path):
-        logger.info(f'Đã tách âm thanh: {folder}')
-        return vocal_output_path, instruments_output_path
-
-    logger.info(f'Đang tách âm thanh: {folder}')
-
-    try:
-        # Đảm bảo mô hình đã tải và cấu hình đúng
-        if not model_loaded or current_model_config.get('model_name') != model_name or \
-                (current_model_config.get('device') == 'auto') != (device == 'auto') or \
-                current_model_config.get('shifts') != shifts:
-            load_model(model_name, device, progress, shifts)
-
-        t_start = time.time()
-
-        try:
-            origin, separated = separator.separate_audio_file(audio_path)
-        except Exception as e:
-            logger.error(f'Lỗi tách âm thanh: {e}')
-            # Thử tải lại mô hình nếu có lỗi
-            release_model()
-            load_model(model_name, device, progress, shifts)
-            logger.info(f'Đã tải lại mô hình, đang thử lại...')
-            origin, separated = separator.separate_audio_file(audio_path)
-
-        t_end = time.time()
-        logger.info(f'Tách âm thanh hoàn tất trong {t_end - t_start:.2f} giây')
-
-        import torchaudio.functional as F
-        target_sr = 48000
-        demucs_sr = separator.samplerate
-
-        # Resample về 48kHz để chuẩn hóa xử lý studio (khớp với DeepFilterNet)
-        vocals_tensor = separated['vocals']
-        if demucs_sr != target_sr:
-            vocals_tensor = F.resample(vocals_tensor, demucs_sr, target_sr)
-        vocals = vocals_tensor.numpy().T
-
-        instr_tensor = (separated['drums'] + separated['bass'] + separated['other'])
-        if demucs_sr != target_sr:
-            instr_tensor = F.resample(instr_tensor, demucs_sr, target_sr)
-        instruments = instr_tensor.numpy().T
-
-        save_wav(vocals, vocal_output_path, sample_rate=target_sr)
-        logger.info(f'已保存人声: {vocal_output_path} ({target_sr}Hz)')
-
-        save_wav(instruments, instruments_output_path, sample_rate=target_sr)
-        logger.info(f'已保存伴奏: {instruments_output_path} ({target_sr}Hz)')
-        
-        # Xóa file gốc để tiết kiệm dung lượng
-        try:
-            os.remove(audio_path)
-            logger.info(f'Đã xóa file gốc để tiết kiệm dung lượng: {audio_path}')
-        except Exception as e:
-            logger.warning(f'Không thể xóa file gốc: {e}')
-
-        return vocal_output_path, instruments_output_path
-
-    except Exception as e:
-        logger.error(f'Tách âm thanh thất bại: {str(e)}')
-        # Có lỗi, giải phóng tài nguyên và ném ngoại lệ
-        release_model()
-        raise
-
-
 def extract_audio_from_video(folder: str, video_path: str = None) -> bool:
     """
-    Trích xuất âm thanh từ video. Nếu không có video_path, mặc định tìm download.mp4 trong thư mục.
+    Trích xuất âm thanh từ video.
     """
     if video_path is None:
         video_path = os.path.join(folder, 'download.mp4')
@@ -185,66 +103,54 @@ def extract_audio_from_video(folder: str, video_path: str = None) -> bool:
         
     audio_path = os.path.join(folder, 'audio.wav')
     if os.path.exists(audio_path):
-        logger.info(f'Đã trích xuất âm thanh: {folder}')
         return True
+
     logger.info(f'Đang trích xuất âm thanh từ video: {video_path} -> {audio_path}')
+    os.system(f'ffmpeg -loglevel error -i "{video_path}" -vn -acodec pcm_s16le -ar 48000 -ac 2 "{audio_path}"')
+    
+    time.sleep(0.5)
+    return os.path.exists(audio_path)
 
-    os.system(
-        f'ffmpeg -loglevel error -i "{video_path}" -vn -acodec pcm_s16le -ar 48000 -ac 2 "{audio_path}"')
-
-    time.sleep(1)
-    logger.info(f'Trích xuất âm thanh hoàn tất: {folder}')
-    return True
-
-
-def separate_all_audio_under_folder(root_folder: str, model_name: str = "htdemucs_ft", device: str = 'auto',
-                                    progress: bool = True, shifts: int = 1, video_path: str = None) -> None:
+def separate_all_audio_under_folder(root_folder: str, model_name: str = "UVR-MDX-NET-Inst_HQ_3.onnx", device: str = 'auto',
+                                    progress: bool = True, shifts: int = 0, video_path: str = None) -> None:
     """
-    Tách tất cả âm thanh trong thư mục.
-    Nếu video_path được cung cấp, ưu tiên sử dụng nó cho thư mục gốc.
+    Xử lý tách tất cả âm thanh trong thư mục.
     """
-    global separator
     vocal_output_path, instruments_output_path = None, None
 
     try:
-        # 1. Trường hợp có video_path cụ thể cho thư mục này
+        # Trường hợp 1: Có video_path cụ thể
         if video_path and os.path.exists(video_path):
-            if 'audio_vocals.wav' not in os.listdir(root_folder):
+            if not os.path.exists(os.path.join(root_folder, 'audio_vocals.wav')):
                 extract_audio_from_video(root_folder, video_path)
-                vocal_output_path, instruments_output_path = separate_audio(root_folder, model_name, device, progress, shifts)
+                vocal_output_path, instruments_output_path = separate_audio(root_folder, model_name)
             else:
                 vocal_output_path = os.path.join(root_folder, 'audio_vocals.wav')
                 instruments_output_path = os.path.join(root_folder, 'audio_instruments.wav')
-            return f'Tách âm thanh hoàn tất: {root_folder}', vocal_output_path, instruments_output_path
+            return f'Xử lý hoàn tất: {root_folder}', vocal_output_path, instruments_output_path
 
-        # 2. Trường hợp duyệt folder (tương thích ngược)
+        # Trường hợp 2: Duyệt folder
         for subdir, dirs, files in os.walk(root_folder):
             if 'download.mp4' not in files and not video_path:
                 continue
             
-            # Ưu tiên dùng video_path nếu có, nếu không tìm download.mp4
             current_video = video_path if video_path else os.path.join(subdir, 'download.mp4')
             
-            if 'audio.wav' not in files:
+            if 'audio.wav' not in files and 'audio_vocals.wav' not in files:
                 extract_audio_from_video(subdir, current_video)
+            
             if 'audio_vocals.wav' not in files:
-                vocal_output_path, instruments_output_path = separate_audio(subdir, model_name, device, progress,
-                                                                            shifts)
-            elif 'audio_vocals.wav' in files and 'audio_instruments.wav' in files:
+                vocal_output_path, instruments_output_path = separate_audio(subdir, model_name)
+            else:
                 vocal_output_path = os.path.join(subdir, 'audio_vocals.wav')
                 instruments_output_path = os.path.join(subdir, 'audio_instruments.wav')
-                logger.info(f'Đã tách âm thanh: {subdir}')
 
-        logger.info(f'Đã hoàn tất tách tất cả âm thanh: {root_folder}')
-        return f'Tất cả âm thanh đã được tách: {root_folder}', vocal_output_path, instruments_output_path
+        return f'Tất cả đã xử lý xong: {root_folder}', vocal_output_path, instruments_output_path
 
     except Exception as e:
         logger.error(f'Lỗi trong quá trình tách âm thanh: {str(e)}')
-        # Có lỗi, giải phóng tài nguyên
         release_model()
         raise
 
-
 if __name__ == '__main__':
-    folder = r"outputs"
-    separate_all_audio_under_folder(folder, shifts=0)
+    separate_all_audio_under_folder("outputs")

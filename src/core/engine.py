@@ -7,7 +7,7 @@ import hashlib
 
 import torch
 from loguru import logger
-from utils.separation import separate_all_audio_under_folder, init_demucs, release_model
+from utils.separation import separate_all_audio_under_folder, release_model
 from utils.dereverb import process_folder_dereverb, init_dereverb, release_dereverb
 from modules.asr.manager import transcribe_all_audio_under_folder
 from modules.asr.whisperx import init_whisperx, init_diarize, release_whisperx
@@ -21,7 +21,7 @@ from utils.perf import PerformanceTracker
 
 # Theo dõi trạng thái khởi tạo mô hình
 models_initialized = {
-    'demucs': False,
+    'separator': False,
     'whisperx': False,
     'diarize': False,
     'funasr': False,
@@ -89,7 +89,7 @@ def initialize_models(tts_method, asr_method, diarization):
 
 
 def process_video(video_file, root_folder, resolution,
-                  demucs_model, device, shifts,
+                  separator_model, device, shifts,
                   asr_method, whisper_model, batch_size, diarization, whisper_min_speakers, whisper_max_speakers,
                   translation_method, translation_target_language,
                   tts_method, tts_target_language, voice,
@@ -170,10 +170,10 @@ def process_video(video_file, root_folder, resolution,
             try:
                 # Chuyền video_file gốc vào để tránh copy
                 status, vocals_path, _ = separate_all_audio_under_folder(
-                    folder, model_name=demucs_model, device=device, progress=True, shifts=shifts, video_path=video_file)
-                logger.info(f'Tách tiếng hoàn tất: {vocals_path}')
+                    folder, model_name=separator_model, device=device, progress=True, shifts=shifts, video_path=video_file)
+                logger.info(f'Tách âm thanh (MDX-Net) hoàn tất: {vocals_path}')
                 
-                # Giải phóng VRAM của Demucs
+                # Giải phóng VRAM
                 release_model()
                 torch.cuda.empty_cache()
                 
@@ -320,7 +320,7 @@ def process_video(video_file, root_folder, resolution,
 
 
 def engine_run(root_folder='outputs', url=None, video_file=None, num_videos=1, resolution='1080p',
-                  demucs_model='htdemucs_ft', device='auto', shifts=1,
+                  separator_model='UVR-MDX-NET-Inst_HQ_3.onnx', device='auto', shifts=1,
                   asr_method='WhisperX', whisper_model='large', batch_size=32, diarization=False,
                   whisper_min_speakers=None, whisper_max_speakers=None,
                   translation_method='LLM', translation_target_language='简体中文',
@@ -343,7 +343,7 @@ def engine_run(root_folder='outputs', url=None, video_file=None, num_videos=1, r
         logger.info("-" * 50)
         logger.info(f"Bắt đầu nhiệm vụ xử lý: {video_file if video_file else url}")
         logger.info(f"Thông số: Thư mục gốc={root_folder}, Độ phân giải={resolution}")
-        logger.info(f"Tách tiếng: Mô hình={demucs_model}, Thiết bị={device}, Số lần dịch chuyển={shifts}")
+        logger.info(f"Tách tiếng (MDX-Net): Mô hình={separator_model}, Thiết bị={device}")
         logger.info(f"Nhận diện: Phương pháp={asr_method}, Mô hình={whisper_model}, Batch Size={batch_size}")
         logger.info(f"Dịch thuật: Phương pháp={translation_method}, Ngôn ngữ mục tiêu={translation_target_language}")
         logger.info(f"TTS: Phương pháp={tts_method}, Ngôn ngữ={tts_target_language}, Giọng={voice}")
@@ -368,7 +368,7 @@ def engine_run(root_folder='outputs', url=None, video_file=None, num_videos=1, r
         if video_file:
             success, output_video, error_msg = process_video(
                 video_file, root_folder, resolution,
-                demucs_model, device, shifts,
+                separator_model, device, shifts,
                 asr_method, whisper_model, batch_size, diarization, whisper_min_speakers, whisper_max_speakers,
                 translation_method, translation_target_language,
                 tts_method, tts_target_language, voice,

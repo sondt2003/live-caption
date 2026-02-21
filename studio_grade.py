@@ -15,8 +15,9 @@ def main():
     parser.add_argument("--voice", type=str, default=None, help="Voice name or speaker_wav path for XTTS cloning.")
     parser.add_argument("--asr_method", type=str, default="WhisperX", choices=['WhisperX', 'FunASR'], help="ASR method")
     parser.add_argument("--video_volume", type=float, default=0.5, help="Background music volume")
-    parser.add_argument("--shifts", type=int, default=0, help="Demucs shifts (default 0 for speed, increase for quality)")
+    parser.add_argument("--shifts", type=int, default=0, help="Deprecated: used to be for Demucs shifts, now unused.")
     parser.add_argument("--video_file", type=str, required=True, help="Path to input video file")
+    parser.add_argument("--separator_model", type=str, default="UVR-MDX-NET-Inst_HQ_3.onnx", help="Separation model (MDX-Net ONNX, e.g. UVR-MDX-NET-Inst_HQ_3.onnx)")
     parser.add_argument("--audio_only", action="store_true", help="Only generate audio, skip video synthesis")
     args = parser.parse_args()
 
@@ -51,8 +52,8 @@ def main():
         batch_size=8,                     # Kích thước batch cho ASR (tăng nếu có nhiều VRAM)
         diarization=True,                 # True: Phân biệt người nói, False: Không phân biệt
         
-        # Model tách nhạc/vocal: 'htdemucs', 'htdemucs_ft', 'htdemucs_6s', 'htdemucs_mmi'
-        demucs_model='htdemucs_ft',       
+        # Model tách nhạc/vocal: MDX-Net ONNX
+        separator_model=args.separator_model,       
         
         # Độ phân giải đầu ra: '720p', '1080p', '4k', '2k'
         target_resolution='1080p',
