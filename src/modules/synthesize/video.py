@@ -1,11 +1,8 @@
 # -*- coding: utf-8 -*-
 import json
 import os
-import shutil
-import string
 import subprocess
 import time
-import random
 import traceback
 
 from loguru import logger
@@ -147,136 +144,150 @@ def synthesize_video(folder, subtitles=True, speed_up=1.00, fps=30, resolution='
     target_w, target_h = convert_resolution(aspect_ratio, resolution)
     resolution_str = f'{target_w}x{target_h}'
     
+    # Lấy thông số đồng bộ từ .env
+    from dotenv import load_dotenv
+    load_dotenv()
+    MAX_PTS_FACTOR = float(os.getenv('MAX_PTS_FACTOR', 1.43))
+    
+    # Điều kiện tiên quyết cho Stream Copy (Siêu tốc):
+    # Không watermark, không đổi phân giải, không đổi fps, không BGM, không phụ đề hardcode
+    base_fast_conditions = (not watermark_path and 
+                            speed_up == 1.0 and 
+                            orig_w == target_w and 
+                            orig_h == target_h and 
+                            abs(video_info['fps'] - fps) < 0.1 and
+                            not background_music)
+    
     # Kiểm tra metadata đồng bộ thích ứng
     is_adaptive = all(k in translation[0] for k in ['original_start', 'original_end']) if translation else False
     
-    # Kiểm tra xem có thể dùng Stream Copy không?
-    # Nếu có is_adaptive, ta BUỘC phải re-encode video để thay đổi PTS từng phần
-    can_stream_copy = (not subtitles and 
-                       not watermark_path and 
-                       speed_up == 1.0 and 
-                       orig_w == target_w and 
-                       orig_h == target_h and 
-                       abs(video_info['fps'] - fps) < 0.1 and
-                       not is_adaptive)
+    # ƯU TIÊN: Nếu người dùng muốn giữ nguyên 1:1 (MAX_PTS_FACTOR=1.0) và đủ điều kiện copy
+    if MAX_PTS_FACTOR == 1.0 and base_fast_conditions:
+        logger.info("MAX_PTS_FACTOR=1.0 phát hiện. Sử dụng Stream Copy siêu tốc...")
+        return run_fast_merge(input_video, input_audio, final_video)
 
-    if can_stream_copy:
-        logger.info("Phát hiện các thông số khớp nhau. Sử dụng Stream Copy để tổng hợp siêu tốc...")
-        ffmpeg_command = [
-            'ffmpeg',
-            '-i', input_video,
-            '-i', input_audio,
-            '-c:v', 'copy',
-            '-c:a', 'aac',
-            '-map', '0:v:0',
-            '-map', '1:a:0',
-            '-shortest',
-            final_video,
-            '-y'
-        ]
-    else:
-        logger.info("Bắt đầu tổng hợp video với cơ chế Adaptive Sync...")
+    # TRƯỜNG HỢP 1: Đồng bộ thích ứng (từng câu)
+    if is_adaptive:
+        segments = []
+        last_orig_end = 0.0
+        last_target_end = 0.0
         
-        if is_adaptive:
-            logger.info("Phát hiện dữ liệu đồng bộ thích ứng. Đang tính toán timeline video...")
-            segments = []
-            last_orig_end = 0.0
-            last_target_end = 0.0
-            # Cấu hình ngưỡng cân bằng: Đồng nhất với TTS
-            MAX_PTS_FACTOR = 1.43 
+        for i, line in enumerate(translation):
+            orig_start = line['original_start']
+            orig_end = line['original_end']
+            target_start = line['start']
+            target_end = line['end']
+            actual_dur = line.get('duration', target_end - target_start)
             
-            for i, line in enumerate(translation):
-                orig_start = line['original_start']
-                orig_end = line['original_end']
-                target_start = line['start']
-                target_end = line['end']
-                # Sử dụng độ dài thực tế của file audio đã tạo (đã được nén/giãn trong TTS)
-                actual_dur = line.get('duration', target_end - target_start)
-                
-                # 1. Xử lý khoảng lặng (Gaps)
-                if orig_start > last_orig_end:
-                    gap_orig_dur = orig_start - last_orig_end
-                    gap_target_dur = target_start - last_target_end
-                    if gap_orig_dur > 0:
-                        MIN_GAP_PTS = 0.2
-                        if gap_target_dur <= 0:
-                            pts = MIN_GAP_PTS
-                        else:
-                            pts = gap_target_dur / gap_orig_dur
-                            pts = max(MIN_GAP_PTS, min(pts, MAX_PTS_FACTOR))
-                        segments.append({'start': last_orig_end, 'end': orig_start, 'pts': pts, 'type': 'gap'})
+            # 1. Xử lý khoảng lặng
+            if orig_start > last_orig_end:
+                gap_orig_dur = orig_start - last_orig_end
+                gap_target_dur = target_start - last_target_end
+                if gap_orig_dur > 0:
+                    pts = max(0.2, min(gap_target_dur / gap_orig_dur, MAX_PTS_FACTOR)) if gap_target_dur > 0 else 0.2
+                    segments.append({'start': last_orig_end, 'end': orig_start, 'pts': pts, 'type': 'gap'})
 
-                # 2. Xử lý giọng nói (Speech)
-                seg_orig_dur = orig_end - orig_start
-                if seg_orig_dur > 0:
-                    # KHỚP 1:1 VỚI ĐỘ DÀI ÂM THANH
-                    pts = actual_dur / seg_orig_dur
-                    
-                    if pts > MAX_PTS_FACTOR:
-                        logger.warning(f"Segment {i}: PTS {pts:.2f} vượt giới hạn. Cố định tại {MAX_PTS_FACTOR}.")
-                        pts = MAX_PTS_FACTOR
-                        
-                    segments.append({'start': orig_start, 'end': orig_end, 'pts': pts, 'type': 'speech'})
-                
-                last_orig_end = orig_end
-                last_target_end = target_end
-
-            # 3. Xử lý đoạn kết (tail)
-            total_duration = video_info.get('duration', 0)
-            if total_duration > last_orig_end:
-                segments.append({'start': last_orig_end, 'end': total_duration, 'pts': 1.0, 'type': 'tail'})
-
-            # LOG DURATION CHECK
-            final_v_dur = sum([ (s['end'] - s['start']) * s['pts'] for s in segments ])
-            logger.info(f"Dự kiến độ dài video sau đồng bộ: {final_v_dur:.2f}s (Audio: {last_target_end:.2f}s)")
-
-            # Construct filter_complex
-            v_parts = []
-            total_duration = video_info.get('duration', 0)
-            for i, seg in enumerate(segments):
-                # Hiển thị log chi tiết để debug
-                logger.debug(f"Segment {i} ({seg['type']}): {seg['start']:.2f}s -> {seg['end']:.2f}s, PTS={seg['pts']:.4f}")
-                
-                # CỦNG CỐ: Đảm bảo start/end không vượt quá video gốc
-                safe_start = min(seg['start'], total_duration - 0.1)
-                safe_end = min(seg['end'], total_duration)
-                if safe_start >= safe_end:
-                    # Nếu segment nằm hoàn toàn ngoài vùng video, ta lấy khung hình cuối cùng
-                    safe_start = max(0, total_duration - 0.1)
-                    safe_end = total_duration
-                
-                v_parts.append(f"[0:v]trim=start={safe_start}:end={safe_end},setpts={seg['pts']}*(PTS-STARTPTS)[v{i}]")
+            # 2. Xử lý giọng nói
+            seg_orig_dur = orig_end - orig_start
+            if seg_orig_dur > 0:
+                pts = actual_dur / seg_orig_dur
+                if pts > MAX_PTS_FACTOR:
+                    logger.warning(f"Segment {i}: PTS {pts:.2f} vượt giới hạn. Cố định tại {MAX_PTS_FACTOR}.")
+                    pts = MAX_PTS_FACTOR
+                segments.append({'start': orig_start, 'end': orig_end, 'pts': pts, 'type': 'speech'})
             
-            filter_complex = ";".join(v_parts) + ";" + "".join([f"[v{i}]" for i in range(len(v_parts))]) + f"concat=n={len(v_parts)}:v=1[v_synced]"
-            v_map = "[v_synced]"
+            last_orig_end = orig_end
+            last_target_end = target_end
+
+        total_duration = video_info.get('duration', 0)
+        if total_duration > last_orig_end:
+            segments.append({'start': last_orig_end, 'end': total_duration, 'pts': 1.0, 'type': 'tail'})
+
+        # LOG DURATION CHECK
+        final_v_dur = sum([ (s['end'] - s['start']) * s['pts'] for s in segments ])
+        logger.info(f"Dự kiến độ dài video: {final_v_dur:.2f}s (Gốc: {total_duration:.2f}s, Audio: {last_target_end:.2f}s)")
+
+        # TỐI ƯU HÓA: Nếu tất cả PTS đều là 1.0 (khớp 1:1), dùng Stream Copy ngay lập tức
+        if all(abs(s['pts'] - 1.0) < 0.01 for s in segments) and base_fast_conditions:
+            logger.info("Phát hiện timeline khớp 1:1 hoàn hảo. Tự động chuyển sang Stream Copy...")
+            return run_fast_merge(input_video, input_audio, final_video)
+
+        # Build complex filter
+        v_parts = []
+        for i, seg in enumerate(segments):
+            safe_start = min(seg['start'], total_duration - 0.1)
+            safe_end = min(seg['end'], total_duration)
+            v_parts.append(f"[0:v]trim=start={safe_start}:end={safe_end},setpts={seg['pts']}*(PTS-STARTPTS)[v{i}]")
+        
+        filter_complex = ";".join(v_parts) + ";" + "".join([f"[v{i}]" for i in range(len(v_parts))]) + f"concat=n={len(v_parts)}:v=1[v_synced]"
+        v_map = "[v_synced]"
+
+    # TRƯỜNG HỢP 2: Không đồng bộ thích ứng (chỉ có tốc độ tổng quát)
+    else:
+        if base_fast_conditions and speed_up == 1.0:
+            logger.info("Tốc độ đồng nhất. Sử dụng Stream Copy siêu tốc...")
+            return run_fast_merge(input_video, input_audio, final_video)
+            
+        v_filters = []
+        if speed_up != 1.0:
+            v_filters.append(f"setpts=PTS/{speed_up}")
+        
+        if v_filters:
+            filter_complex = f"[0:v]{','.join(v_filters)}[v_processed]"
+            v_map = "[v_processed]"
         else:
-            # Fallback to global speed_up
-            v_filters = []
-            if speed_up != 1.0:
-                v_filters.append(f"setpts=PTS/{speed_up}")
+            filter_complex = ""
+            v_map = "0:v"
+
+
+    # --- Common Post-Processing Filters (Watermark, etc.) ---
+    # These apply if we didn't return early from fast merge.
+    
+    input_args = ['-i', input_video, '-i', input_audio]
+    
+    # 3. Watermark
+    if watermark_path and os.path.exists(watermark_path):
+        input_args.extend(['-i', watermark_path])
+        base_v = v_map
+        filter_complex += f";[2:v]scale=iw*0.15:ih*0.15[wm];{base_v}[wm]overlay=W-w-10:H-h-10[v_out]"
+        v_map = "[v_out]"
+
+    ffmpeg_command = [
+        'ffmpeg',
+        *input_args,
+        '-filter_complex', filter_complex,
+        '-map', v_map,
+        '-map', '1:a:0',
+        '-r', str(fps),
+        '-s', resolution_str,
+        '-c:v', 'libx264',
+        '-c:a', 'aac',
+        '-preset', 'veryfast',
+        final_video,
+        '-y',
+        '-threads', '0',
+        '-shortest',
+    ]
+    
+    # 4. Background Music Mixing
+    if background_music and os.path.exists(background_music):
+        logger.info(f"Tối ưu hóa: Trộn nhạc nền trong cùng 1 pass FFmpeg từ: {background_music}")
+        bgm_input_index = len(input_args) // 2
+        input_args.extend(['-i', background_music])
+        
+        audio_filter = f"[1:a]volume={video_volume}[a_main];[{bgm_input_index}:a]volume={bgm_volume}[a_bgm];[a_main][a_bgm]amix=inputs=2:duration=first[a_out]"
+        
+        if filter_complex:
+            filter_complex += f";{audio_filter}"
+        else:
+            filter_complex = audio_filter
             
-            if v_filters:
-                filter_complex = f"[0:v]{','.join(v_filters)}[v_processed]"
-                v_map = "[v_processed]"
-            else:
-                filter_complex = ""
-                v_map = "0:v"
-
-
-        # Watermark
-        input_args = ['-i', input_video, '-i', input_audio]
-        if watermark_path and os.path.exists(watermark_path):
-            input_args.extend(['-i', watermark_path])
-            base_v = v_map
-            filter_complex += f";[2:v]scale=iw*0.15:ih*0.15[wm];{base_v}[wm]overlay=W-w-10:H-h-10[v_out]"
-            v_map = "[v_out]"
-
         ffmpeg_command = [
             'ffmpeg',
             *input_args,
             '-filter_complex', filter_complex,
             '-map', v_map,
-            '-map', '1:a:0',
+            '-map', '[a_out]',
             '-r', str(fps),
             '-s', resolution_str,
             '-c:v', 'libx264',
@@ -285,51 +296,30 @@ def synthesize_video(folder, subtitles=True, speed_up=1.00, fps=30, resolution='
             final_video,
             '-y',
             '-threads', '0',
-            '-shortest', # Ensure video stops when shortest stream ends (usually video)
         ]
-        
-        # === OPTIMIZATION: Single-Pass Background Music Mixing ===
-        if background_music and os.path.exists(background_music):
-            logger.info(f"Tối ưu hóa: Trộn nhạc nền trong cùng 1 pass FFmpeg từ: {background_music}")
-            
-            # Add background music as a new input (index 2 or 3 depending on watermark)
-            bgm_input_index = len(input_args) // 2 # input_args has '-i', 'path', '-i', 'path'...
-            input_args.extend(['-i', background_music])
-            
-            # Update filter_complex to mix audio
-            # Current map is '1:a:0' (Dubbed Audio). We need to mix it with bgm_input_index:a
-            
-            # Create audio mix filter
-            # [1:a]volume=video_volume[a1];[bgm_idx:a]volume=bgm_volume[a2];[a1][a2]amix=inputs=2:duration=first[a_out]
-            audio_filter = f"[1:a]volume={video_volume}[a_main];[{bgm_input_index}:a]volume={bgm_volume}[a_bgm];[a_main][a_bgm]amix=inputs=2:duration=first[a_out]"
-            
-            # Prepend audio filter to existing complex filter (to keep it organized, though order doesn't strictly matter if labels are unique)
-            if filter_complex:
-                filter_complex += f";{audio_filter}"
-            else:
-                filter_complex = audio_filter
-                
-            # Update output map to use the mixed audio
-            ffmpeg_command = [
-                'ffmpeg',
-                *input_args,
-                '-filter_complex', filter_complex,
-                '-map', v_map,
-                '-map', '[a_out]', # Use the mixed audio stream
-                '-r', str(fps),
-                '-s', resolution_str,
-                '-c:v', 'libx264',
-                '-c:a', 'aac',
-                '-preset', 'veryfast',
-                final_video,
-                '-y',
-                '-threads', '0',
-            ]
 
     subprocess.run(ffmpeg_command)
     time.sleep(1)
-
     return final_video
+
+
+def run_fast_merge(input_video, input_audio, output_video):
+    """Thực hiện ghép video/audio bằng Stream Copy (không encode lại)."""
+    ffmpeg_command = [
+        'ffmpeg',
+        '-i', input_video,
+        '-i', input_audio,
+        '-c:v', 'copy',
+        '-c:a', 'aac',
+        '-map', '0:v:0',
+        '-map', '1:a:0',
+        '-shortest',
+        output_video,
+        '-y'
+    ]
+    subprocess.run(ffmpeg_command)
+    time.sleep(1)
+    return output_video
 
 
 def synthesize_all_video_under_folder(folder, subtitles=True, speed_up=1.00, fps=30, background_music=None, bgm_volume=0.5, video_volume=1.0, resolution='1080p', watermark_path="f_logo.png", original_video_path=None):

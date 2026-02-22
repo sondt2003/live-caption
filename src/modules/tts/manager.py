@@ -161,6 +161,34 @@ def adjust_audio_length(wav_path, desired_length, sample_rate=24000, min_speed_f
     actual_duration = len(wav_final) / sample_rate
     return wav_final, actual_duration
 
+def get_gender_from_audio(wav_path, start, end):
+    """
+    Detect gender based on average pitch (F0).
+    Male: < 165Hz
+    Female: > 165Hz
+    """
+    try:
+        # Load specific segment
+        duration = end - start
+        if duration < 0.5: return None # Too short to decide
+        
+        y, sr = librosa.load(wav_path, sr=16000, offset=start, duration=duration)
+        
+        # Estimate pitch using PYIN
+        f0, voiced_flag, voiced_probs = librosa.pyin(y, fmin=50, fmax=300, sr=sr)
+        
+        # Filter out unvoiced parts
+        voiced_f0 = f0[voiced_flag]
+        
+        if len(voiced_f0) == 0:
+            return None
+            
+        return np.mean(voiced_f0) # Return Average Pitch
+            
+    except Exception as e:
+        logger.warning(f"Gender detection failed: {e}")
+        return None
+
 def generate_all_wavs_under_folder(folder, method='auto', target_language='vi', voice='vi-VN-HoaiMyNeural', video_volume=1.0):
     transcript_path = os.path.join(folder, 'translation.json')
     output_folder = os.path.join(folder, 'wavs')
@@ -172,6 +200,61 @@ def generate_all_wavs_under_folder(folder, method='auto', target_language='vi', 
     # Normalize language code
     target_language = target_language.lower().replace('tiếng việt', 'vi').replace('简体中文', 'zh-cn')
     
+    # --- GENDER DETECTION (ONE-TIME PER SPEAKER) ---
+    # Map SPEAKER_00 -> 'male'/'female'
+    speaker_gender_map = {}
+    
+    # Only run if target is Vietnamese (EdgeTTS currently only supported for this logic)
+    if 'vi' in target_language:
+        logger.info("Analyzing speaker genders for consistent voice selection...")
+        speaker_pitches = {} # { 'SPEAKER_00': [120, 130, ...], 'SPEAKER_01': ... }
+        
+        # force_male_voice flag
+        force_male_voice = False
+        
+        # Check if Diarization was OFF (only SPEAKER_00 exists)
+        unique_speakers = set(line['speaker'] for line in transcript)
+        if len(unique_speakers) <= 1:
+            logger.info("Single speaker detected (Diarization OFF). Skipping gender check and defaulting to MALE voice.")
+            force_male_voice = True
+        
+        for line in transcript:
+            spk = line['speaker']
+            
+            # If forcing male voice, skip detection
+            if force_male_voice:
+                speaker_gender_map[spk] = 'male'
+                continue
+
+            if spk not in speaker_pitches:
+                speaker_pitches[spk] = []
+            
+            # Collect pitch samples (max 5 samples per speaker to save time)
+            if len(speaker_pitches[spk]) < 5:
+                pitch = get_gender_from_audio(os.path.join(folder, 'audio_vocals.wav'), line.get('start'), line.get('end'))
+                if pitch:
+                    speaker_pitches[spk].append(pitch)
+        
+        # Determine gender based on average pitch of all samples
+        for spk, pitches in speaker_pitches.items():
+            if not pitches:
+                speaker_gender_map[spk] = 'female' # Default
+                continue
+            
+            avg_pitch = np.mean(pitches)
+            gender = 'male' if avg_pitch < 165 else 'female'
+            speaker_gender_map[spk] = gender
+            logger.info(f"Detected {spk}: {gender} (Avg Pitch: {avg_pitch:.1f}Hz)")
+    
+    # Check if Diarization was effective (more than 1 speaker detected)
+    # If only 1 speaker (SPEAKER_00), we should fallback to per-segment detection
+    # because it likely means Diarization was OFF or failed.
+    is_multi_speaker = len(speaker_gender_map) > 1
+    if not is_multi_speaker and 'vi' in target_language:
+        logger.info("Single speaker detected. Using consistent gender for entire video.")
+    # -----------------------------------------------
+    # -----------------------------------------------
+
     # Khởi tạo engine TTS từ Factory
     if method is None or method.lower() == 'auto':
         engine = TTSFactory.get_best_tts_engine(target_language)
@@ -192,8 +275,19 @@ def generate_all_wavs_under_folder(folder, method='auto', target_language='vi', 
         # Ưu tiên các file cắt riêng cho từng speaker (ngắn và tập trung hơn)
         speaker_wav = os.path.join(folder, 'SPEAKER', f'{speaker}.wav')
         if not os.path.exists(speaker_wav):
-            vocal_dereverb_wav = os.path.join(folder, 'audio_vocals_dereverb.wav')
-            speaker_wav = vocal_dereverb_wav if os.path.exists(vocal_dereverb_wav) else os.path.join(folder, 'audio_vocals.wav')
+            speaker_wav = os.path.join(folder, 'audio_vocals.wav')
+
+        # Consistent Voice Selection based on Speaker ID
+        task_voice = voice_mapper.get_voice(speaker, text)
+        
+        if hasattr(engine, 'language_map') and 'vi' in target_language and "EdgeTTS" in str(type(engine)):
+            # Stable Mode: Use pre-calculated gender for the speaker
+            gender = speaker_gender_map.get(speaker, 'female')
+
+            if gender == 'male':
+                task_voice = 'vi-VN-NamMinhNeural'
+            else:
+                task_voice = 'vi-VN-HoaiMyNeural'
 
         # VieNeu cloning works better without ref_text if reference is cross-language
         tasks.append({
@@ -202,7 +296,7 @@ def generate_all_wavs_under_folder(folder, method='auto', target_language='vi', 
             "speaker_wav": speaker_wav,
             "ref_text": None, # Skip ref_text to avoid alignment issues/token overflow
             "target_language": target_language,
-            "voice": voice_mapper.get_voice(speaker, text)
+            "voice": task_voice
         })
 
     # Gọi Engine để tạo âm thanh hàng loạt (Batch Processing)

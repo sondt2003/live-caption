@@ -94,18 +94,26 @@ def load_diarize_model(device='auto'):
     t_start = time.time()
     try:
         token = os.getenv('HF_TOKEN')
-        if not token:
-            logger.warning("HF_TOKEN is not set in .env file, skipping diarization")
+        local_path = os.getenv('DIARIZATION_MODEL_PATH')
+        
+        # Ưu tiên load từ local path nếu đã download về máy
+        if local_path and os.path.exists(local_path):
+            logger.info(f"Loading diarization model from local path: {local_path}")
+            diarize_model = whisperx.DiarizationPipeline(model_name=local_path, device=device)
+        elif token:
+            logger.info("Loading diarization model from Hugging Face...")
+            diarize_model = whisperx.DiarizationPipeline(use_auth_token=token, device=device)
+        else:
+            logger.warning("HF_TOKEN and DIARIZATION_MODEL_PATH are not set, skipping diarization")
             return
             
-        diarize_model = whisperx.DiarizationPipeline(use_auth_token=token, device=device)
         t_end = time.time()
         logger.info(f'Loaded diarization model in {t_end - t_start:.2f}s')
     except Exception as e:
         t_end = time.time()
         logger.error(f"Failed to load diarization model: {str(e)}")
 
-def whisperx_transcribe_audio(wav_path, model_name: str = 'large', download_root='models/ASR/whisper', device='auto', batch_size=32, diarization=True, min_speakers=None, max_speakers=None):
+def whisperx_transcribe_audio(wav_path, model_name: str = 'large', download_root='models/ASR/whisper', device='auto', batch_size=32, diarization=True, min_speakers=None, max_speakers=None, language=None):
     """
     Transcribe audio with alignment and optional diarization.
     """
@@ -116,7 +124,8 @@ def whisperx_transcribe_audio(wav_path, model_name: str = 'large', download_root
     load_whisper_model(model_name, download_root, device)
     logger.info(f"Transcribing {wav_path}...")
     t_start = time.time()
-    result = whisper_model.transcribe(wav_path, batch_size=batch_size)
+    # If language is provided, use it to skip auto-detection
+    result = whisper_model.transcribe(wav_path, batch_size=batch_size, language=language)
     
     if result['language'] == 'nn' or not result['segments']:
         logger.warning(f'No language detected or no segments in {wav_path}')

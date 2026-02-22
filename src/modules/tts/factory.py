@@ -23,9 +23,6 @@ class TTSFactory:
             elif 'vieneu' in method_lower:
                 from .providers.vieneu import VieNeuProvider
                 TTSFactory._instances[method_lower] = VieNeuProvider()
-            elif 'azure' in method_lower:
-                from .providers.azure import AzureTTSProvider
-                TTSFactory._instances[method_lower] = AzureTTSProvider()
             elif 'elevenlabs' in method_lower or 'ai33' in method_lower:
                 from .providers.elevenlabs import ElevenLabsProvider
                 TTSFactory._instances[method_lower] = ElevenLabsProvider()

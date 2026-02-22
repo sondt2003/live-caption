@@ -24,6 +24,30 @@ class MinimaxProvider(BaseTTS):
         if not self.api_key:
             logger.warning("XI_API_KEY not found in environment variables. Minimax TTS may fail.")
 
+    def generate_batch(self, tasks: list) -> None:
+        """
+        Generate multiple audio files in parallel using all available threads.
+        """
+        import concurrent.futures
+        
+        # Unlimited workers for maximum speed
+        max_workers = len(tasks) if tasks else 1
+        logger.info(f"Minimax: Generating {len(tasks)} segments in parallel (max_workers={max_workers})...")
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = []
+            for task in tasks:
+                text = task.get("text")
+                output_path = task.get("output_path")
+                kwargs = {k: v for k, v in task.items() if k not in ["text", "output_path"]}
+                futures.append(executor.submit(self.generate, text, output_path, **kwargs))
+            
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    future.result()
+                except Exception as e:
+                    logger.error(f"Minimax batch task failed: {e}")
+
     def generate(self, text: str, output_path: str, **kwargs) -> None:
         if os.path.exists(output_path):
             return

@@ -2,21 +2,16 @@ import json
 import os
 import time
 import traceback
-import shutil
-import hashlib
 
 import torch
 from loguru import logger
 from utils.separation import separate_all_audio_under_folder, release_model
-from utils.dereverb import process_folder_dereverb, init_dereverb, release_dereverb
 from modules.asr.manager import transcribe_all_audio_under_folder
 from modules.asr.whisperx import init_whisperx, init_diarize, release_whisperx
 from modules.asr.funasr import init_funasr
 from modules.translation.manager import translate_all_transcript_under_folder
 from modules.tts.manager import generate_all_wavs_under_folder, init_TTS
 from modules.synthesize.video import synthesize_all_video_under_folder
-from utils.utils import save_wav
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from utils.perf import PerformanceTracker
 
 # Theo dõi trạng thái khởi tạo mô hình
@@ -24,8 +19,7 @@ models_initialized = {
     'separator': False,
     'whisperx': False,
     'diarize': False,
-    'funasr': False,
-    'dereverb': False
+    'funasr': False
 }
 
 
@@ -50,43 +44,10 @@ def initialize_models(tts_method, asr_method, diarization):
     global models_initialized
 
     # LAZY LOADING STRATEGY:
-    # Instead of pre-loading everything, we let the individual processing steps
-    # load models as needed. This significantly reduces peak VRAM usage and startup time.
-    # The 'init_demucs', 'init_dereverb', etc. functions already handle singleton logic.
+    # The 'init_Demucs' (removed), 'init_whisperx', etc. functions already handle singleton logic.
     
     logger.info("Optimization: Skipping eager model loading. Models will be loaded on demand.")
     return
-
-    # OLD EAGER LOADING LOGIC (DISABLED)
-    # with ThreadPoolExecutor() as executor:
-    #     try:
-    #         # Khởi tạo mô hình Demucs
-    #         if not models_initialized['demucs']:
-    #             executor.submit(init_demucs)
-    #             models_initialized['demucs'] = True
-    #             logger.info("Khởi tạo mô hình Demucs hoàn tất")
-    #         
-    #         # Khởi tạo mô hình Dereverb
-    #         if not models_initialized.get('dereverb', False):
-    #             executor.submit(init_dereverb)
-    #             models_initialized['dereverb'] = True
-    #             logger.info("Đang khởi tạo mô hình khử vang DeepFilterNet...")
-    #
-    #         # LƯU Ý: Không khởi tạo WhisperX ở đây để tránh OOM (std::bad_alloc)
-    #         # Nó sẽ được tải lười (lazy load) khi thực sự cần thiết trong pipeline
-    #         if asr_method == 'FunASR' and not models_initialized['funasr']:
-    #             executor.submit(init_funasr)
-    #             models_initialized['funasr'] = True
-    #             logger.info("Khởi tạo mô hình FunASR hoàn tất")
-    #
-    #     except Exception as e:
-    #         stack_trace = traceback.format_exc()
-    #         logger.error(f"Khởi tạo mô hình thất bại: {str(e)}\n{stack_trace}")
-    #         # Reset trạng thái khởi tạo nếu có lỗi
-    #         models_initialized = {key: False for key in models_initialized}
-    #         release_model()  # Giải phóng các mô hình đã tải
-    #         raise
-
 
 def process_video(video_file, root_folder, resolution,
                   separator_model, device, shifts,
@@ -94,7 +55,7 @@ def process_video(video_file, root_folder, resolution,
                   translation_method, translation_target_language,
                   tts_method, tts_target_language, voice,
                   subtitles, speed_up, fps, background_music, bgm_volume, video_volume,
-                  target_resolution, max_retries, progress_callback=None, tracker=None, audio_only=False):
+                  target_resolution, max_retries, progress_callback=None, tracker=None, audio_only=False, language=None):
     """
     Quy trình xử lý hoàn chỉnh cho một video duy nhất với hỗ trợ callback tiến độ.
 
@@ -173,28 +134,14 @@ def process_video(video_file, root_folder, resolution,
                     folder, model_name=separator_model, device=device, progress=True, shifts=shifts, video_path=video_file)
                 logger.info(f'Tách âm thanh (MDX-Net) hoàn tất: {vocals_path}')
                 
-                # Giải phóng VRAM
-                release_model()
-                torch.cuda.empty_cache()
+                # Giải phóng VRAM nếu không có cờ giữ mô hình
+                if os.getenv('KEEP_MODELS') != 'True':
+                    release_model()
+                    torch.cuda.empty_cache()
                 
                 if tracker: tracker.end_stage("Separation")
                 
-                # Giai đoạn mới: Khử vang (Studio-Grade Upgrade)
-                if progress_callback:
-                    progress_callback(progress_base + 5, "Đang thực hiện khử vang tiếng người (Dereverb)...")
-                
-                if tracker: tracker.start_stage("Dereverb")
-                dereverb_path = process_folder_dereverb(folder)
-                if dereverb_path:
-                    logger.info(f'Khử vang hoàn tất: {dereverb_path}')
-                else:
-                    logger.warning('Bỏ qua khử vang (File không tồn tại hoặc lỗi)')
-                
-                if tracker: tracker.end_stage("Dereverb")
-                
-                # Giải phóng VRAM của Dereverb
-                release_dereverb()
-                torch.cuda.empty_cache()
+                if tracker: tracker.end_stage("Separation")
             except Exception as e:
                 stack_trace = traceback.format_exc()
                 error_msg = f'Tách tiếng thất bại: {str(e)}\n{stack_trace}'
@@ -215,14 +162,16 @@ def process_video(video_file, root_folder, resolution,
                     folder, asr_method=asr_method, whisper_model_name=whisper_model, device=device,
                     batch_size=batch_size, diarization=diarization,
                     min_speakers=whisper_min_speakers,
-                    max_speakers=whisper_max_speakers)
+                    max_speakers=whisper_max_speakers,
+                    language=language)
                 logger.info(f'Nhận diện giọng nói hoàn tất: {status}')
                 
                 if tracker: tracker.end_stage("ASR")
                 
                 # Giải phóng VRAM của WhisperX
-                release_whisperx()
-                torch.cuda.empty_cache()
+                if os.getenv('KEEP_MODELS') != 'True':
+                    release_whisperx()
+                    torch.cuda.empty_cache()
             except Exception as e:
                 stack_trace = traceback.format_exc()
                 error_msg = f'Nhận diện giọng nói thất bại: {str(e)}\n{stack_trace}'
@@ -327,7 +276,7 @@ def engine_run(root_folder='outputs', url=None, video_file=None, num_videos=1, r
                   tts_method='auto', tts_target_language='简体中文', voice=None,
                   subtitles=False, speed_up=1.00, fps=30,
                   background_music=None, bgm_volume=0.5, video_volume=1.0, target_resolution='1080p',
-                  max_workers=3, max_retries=5, progress_callback=None, audio_only=False):
+                  max_workers=3, max_retries=5, progress_callback=None, audio_only=False, language=None):
     """
     Hàm chạy chính toàn bộ quy trình xử lý video.
 
@@ -373,7 +322,7 @@ def engine_run(root_folder='outputs', url=None, video_file=None, num_videos=1, r
                 translation_method, translation_target_language,
                 tts_method, tts_target_language, voice,
                 subtitles, speed_up, fps, background_music, bgm_volume, video_volume,
-                target_resolution, max_retries, progress_callback, tracker, audio_only=audio_only
+                target_resolution, max_retries, progress_callback, tracker, audio_only=audio_only, language=language
             )
 
             if success:

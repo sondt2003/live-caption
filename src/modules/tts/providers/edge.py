@@ -23,8 +23,8 @@ class EdgeTTSProvider(BaseTTS):
         """
         import concurrent.futures
         
-        # Max workers for EdgeTTS to avoid rate limits while maintaining speed
-        MAX_WORKERS = 10
+        # Use as many workers as there are tasks for maximum speed
+        MAX_WORKERS = len(tasks) if tasks else 1
         
         logger.info(f"EdgeTTS: Generating {len(tasks)} segments in parallel (max_workers={MAX_WORKERS})...")
         

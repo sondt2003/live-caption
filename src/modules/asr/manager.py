@@ -36,14 +36,11 @@ def merge_segments(transcript, ending='!"\').:;?]}~！“”’）。：；？�
     return merged_transcription
 
 def generate_speaker_audio(folder, transcript):
-    vocal_dereverb_wav = os.path.join(folder, 'audio_vocals_dereverb.wav')
-    vocal_wav = os.path.join(folder, 'audio_vocals.wav')
+    wav_path = os.path.join(folder, 'audio_vocals.wav')
     
-    # Priority: dereverb vocals
-    if os.path.exists(vocal_dereverb_wav):
-        wav_path = vocal_dereverb_wav
-    else:
-        wav_path = vocal_wav
+    if not os.path.exists(wav_path):
+        logger.warning(f"Vocals file not found for speaker audio generation: {wav_path}")
+        return
         
     audio_data, samplerate = librosa.load(wav_path, sr=24000)
     speaker_dict = dict()
@@ -66,15 +63,11 @@ def generate_speaker_audio(folder, transcript):
         save_wav(audio, speaker_file_path)
 
 
-def transcribe_audio(method, folder, model_name: str = 'large', download_root='models/ASR/whisper', device='auto', batch_size=32, diarization=True,min_speakers=None, max_speakers=None):
-    vocal_dereverb_wav = os.path.join(folder, 'audio_vocals_dereverb.wav')
-    vocal_wav = os.path.join(folder, 'audio_vocals.wav')
+def transcribe_audio(method, folder, model_name: str = 'large', download_root='models/ASR/whisper', device='auto', batch_size=32, diarization=True,min_speakers=None, max_speakers=None, language=None):
+    wav_path = os.path.join(folder, 'audio_vocals.wav')
     
-    if os.path.exists(vocal_dereverb_wav):
-        wav_path = vocal_dereverb_wav
-    elif os.path.exists(vocal_wav):
-        wav_path = vocal_wav
-    else:
+    if not os.path.exists(wav_path):
+        logger.error(f"Vocals file not found for transcription: {wav_path}")
         return False
     
     logger.info(f'Transcribing {wav_path}')
@@ -82,7 +75,7 @@ def transcribe_audio(method, folder, model_name: str = 'large', download_root='m
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
     if method == 'WhisperX':
-        transcript = whisperx_transcribe_audio(wav_path, model_name, download_root, device, batch_size, diarization, min_speakers, max_speakers)
+        transcript = whisperx_transcribe_audio(wav_path, model_name, download_root, device, batch_size, diarization, min_speakers, max_speakers, language=language)
     elif method == 'FunASR':
         transcript = funasr_transcribe_audio(wav_path, device, batch_size, diarization)
     else:
@@ -96,11 +89,11 @@ def transcribe_audio(method, folder, model_name: str = 'large', download_root='m
     generate_speaker_audio(folder, transcript)
     return transcript
 
-def transcribe_all_audio_under_folder(folder, asr_method, whisper_model_name: str = 'large', device='auto', batch_size=32, diarization=False, min_speakers=None, max_speakers=None):
+def transcribe_all_audio_under_folder(folder, asr_method, whisper_model_name: str = 'large', device='auto', batch_size=32, diarization=False, min_speakers=None, max_speakers=None, language=None):
     transcribe_json = None
     for root, dirs, files in os.walk(folder):
         if 'audio_vocals.wav' in files and 'transcript.json' not in files:
-            transcribe_json = transcribe_audio(asr_method, root, whisper_model_name, 'models/ASR/whisper', device, batch_size, diarization, min_speakers, max_speakers)
+            transcribe_json = transcribe_audio(asr_method, root, whisper_model_name, 'models/ASR/whisper', device, batch_size, diarization, min_speakers, max_speakers, language=language)
         elif 'transcript.json' in files:
             transcribe_json = json.load(open(os.path.join(root, 'transcript.json'), 'r', encoding='utf-8'))
 

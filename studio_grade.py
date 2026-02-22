@@ -19,6 +19,7 @@ def main():
     parser.add_argument("--video_file", type=str, required=True, help="Path to input video file")
     parser.add_argument("--separator_model", type=str, default="UVR-MDX-NET-Inst_HQ_3.onnx", help="Separation model (MDX-Net ONNX, e.g. UVR-MDX-NET-Inst_HQ_3.onnx)")
     parser.add_argument("--audio_only", action="store_true", help="Only generate audio, skip video synthesis")
+    parser.add_argument("--language", type=str, default=None, help="ASR language code (e.g., 'en', 'vi'). Skips auto-detection if provided.")
     args = parser.parse_args()
 
     # Test video path
@@ -50,7 +51,7 @@ def main():
         # Model WhisperX: 'tiny', 'base', 'small', 'medium', 'large-v1', 'large-v2', 'large-v3'
         whisper_model='small',            
         batch_size=8,                     # Kích thước batch cho ASR (tăng nếu có nhiều VRAM)
-        diarization=True,                 # True: Phân biệt người nói, False: Không phân biệt
+        diarization=False,                 # True: Phân biệt người nói, False: Không phân biệt
         
         # Model tách nhạc/vocal: MDX-Net ONNX
         separator_model=args.separator_model,       
@@ -62,7 +63,8 @@ def main():
         video_volume=args.video_volume,
         
         # Tùy chọn chỉ xuất âm thanh
-        audio_only=args.audio_only
+        audio_only=args.audio_only,
+        language=args.language
     )
 
     print(f"Test Status: {msg}")
