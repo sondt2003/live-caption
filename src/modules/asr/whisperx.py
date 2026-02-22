@@ -57,9 +57,9 @@ def load_whisper_model(model_name: str = 'large', download_root = 'models/ASR/wh
     if device == 'cpu':
         whisper_model = whisperx.load_model(model_name, download_root=download_root, device=device, compute_type='int8')
     else:
-        # Save VRAM by using float16 (default) or int8_float16 if supported
-        # float16 is faster and uses less VRAM than float32
-        whisper_model = whisperx.load_model(model_name, download_root=download_root, device=device, compute_type='float16')
+        # Save VRAM by using int8_float16 (reduces usage by ~30%)
+        # float16 is faster but uses more VRAM than int8 variants
+        whisper_model = whisperx.load_model(model_name, download_root=download_root, device=device, compute_type='int8_float16')
         
     t_end = time.time()
     logger.info(f'Loaded WhisperX model: {model_name} in {t_end - t_start:.2f}s')
@@ -120,30 +120,42 @@ def whisperx_transcribe_audio(wav_path, model_name: str = 'large', download_root
     if device == 'auto':
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
-    # 1. Transcribe
+    # 1. Load Audio to RAM (Optimization: reuse for all stages)
+    # This avoids redundant disk I/O and resampling.
+    logger.info(f"Loading audio to RAM: {wav_path}")
+    audio = whisperx.load_audio(wav_path)
+    audio_data = {
+        'waveform': torch.from_numpy(audio[None, :]),
+        'sample_rate': whisperx.audio.SAMPLE_RATE
+    }
+    
+    # 2. Transcribe
     load_whisper_model(model_name, download_root, device)
-    logger.info(f"Transcribing {wav_path}...")
+    logger.info(f"Transcribing...")
     t_start = time.time()
-    # If language is provided, use it to skip auto-detection
-    result = whisper_model.transcribe(wav_path, batch_size=batch_size, language=language)
+    # Use pre-loaded audio for transcription
+    result = whisper_model.transcribe(audio, batch_size=batch_size, language=language)
     
     if result['language'] == 'nn' or not result['segments']:
         logger.warning(f'No language detected or no segments in {wav_path}')
         return False
     
-    # 2. Align
+    # 3. Align
     load_align_model(result['language'], device, download_root)
     if align_model:
         logger.info(f"Aligning segments for {result['language']}...")
+        # Use pre-loaded audio for alignment
         result = whisperx.align(result['segments'], align_model, align_metadata,
-                                wav_path, device, return_char_alignments=False)
+                                audio, device, return_char_alignments=False)
     
-    # 3. Diarize
+    # 4. Diarize
     if diarization:
         load_diarize_model(device)
         if diarize_model:
             logger.info("Running speaker diarization...")
-            diarize_segments = diarize_model(wav_path, min_speakers=min_speakers, max_speakers=max_speakers)
+            # Optimization: pass pre-loaded audio_data to diarize_model
+            # Reference: https://github.com/m-bain/whisperX/issues/399
+            diarize_segments = diarize_model(audio_data, min_speakers=min_speakers, max_speakers=max_speakers)
             result = whisperx.assign_word_speakers(diarize_segments, result)
         else:
             logger.warning("Diarization model not available, skipping.")
@@ -160,7 +172,7 @@ def whisperx_transcribe_audio(wav_path, model_name: str = 'large', download_root
     
     t_end = time.time()
     logger.info(f"ASR completed in {t_end - t_start:.2f}s")
-    return transcript
+    return transcript, audio
 
 if __name__ == '__main__':
     for root, dirs, files in os.walk("videos"):

@@ -23,10 +23,10 @@ def ensure_transcript_length(transcript, max_length=4000):
     return before[:length] + after[-length:]
 
 def split_text_into_sentences(para):
-    para = re.sub('([。！？\?])([^，。！？\?”’》])', r"\1\n\2", para)
-    para = re.sub('(\.{6})([^，。！？\?”’》])', r"\1\n\2", para)
-    para = re.sub('(\…{2})([^，。！？\?”’》])', r"\1\n\2", para)
-    para = re.sub('([。！？\?][”’])([^，。！？\?”’》])', r'\1\n\2', para)
+    para = re.sub(r'([。！？\?])([^，。！？\?”’》])', r"\1\n\2", para)
+    para = re.sub(r'(\.{6})([^，。！？\?”’》])', r"\1\n\2", para)
+    para = re.sub(r'(\…{2})([^，。！？\?”’》])', r"\1\n\2", para)
+    para = re.sub(r'([。！？\?][”’])([^，。！？\?”’》])', r'\1\n\2', para)
     para = para.rstrip()
     return para.split("\n")
 
@@ -55,13 +55,13 @@ def valid_translation(text, translation):
             translation = translation.split(pattern)[-1].split(sep)[0]
             return True, translation_postprocess(translation)
 
-    if len(text) <= 10 and len(translation) > 15:
+    if len(text) <= 5 and len(translation) > 40: # Much looser for CJK vs Vietnamese
         return False, 'Only translate the following sentence and give me the result.'
     
     forbidden = ['翻译', '译文', '简体中文', 'translate', 'translation']
     translation = translation.strip()
     for word in forbidden:
-        if word in translation:
+        if word in translation and len(translation) > len(word) * 2: # Only fail if it's likely a preamble
             return False, f"Don't include `{word}` in the translation."
     
     return True, translation_postprocess(translation)
@@ -178,6 +178,78 @@ def _translate(summary, transcript, target_language='vi', method='LLM'):
     info = f'Video: "{summary["title"]}". Summary: {summary["summary"]}.'
     translator = TranslatorFactory.get_translator(method, target_language)
     
+    method_lower = method.lower()
+    is_google_bing = 'google' in method_lower or 'bing' in method_lower
+    
+    if is_google_bing:
+        # SMART BATCH TRANSLATION (Character-limited)
+        logger.info(f"Using Smart Batch Translation for {method} ({len(transcript)} segments)...")
+        all_texts = [line['text'] for line in transcript]
+        full_translation = []
+        
+        # Google typically allows 5k chars, but URL limits or stability suggest 3k
+        max_batch_chars = 3000 
+        separator = "\n[SEP]\n"
+        
+        current_batch = []
+        current_length = 0
+        
+        batches = []
+        for text in all_texts:
+            # If a single sentence is huge, we still gotta send it
+            if current_length + len(text) + len(separator) > max_batch_chars and current_batch:
+                batches.append(current_batch)
+                current_batch = []
+                current_length = 0
+            
+            current_batch.append(text)
+            current_length += len(text) + len(separator)
+            
+        if current_batch:
+            batches.append(current_batch)
+            
+        for i, batch in enumerate(batches):
+            joined_text = separator.join(batch)
+            translated_batch = ""
+            
+            for retry in range(3):
+                try:
+                    # Google/Bing providers expect messages list
+                    messages = [{'role': 'user', 'content': joined_text}]
+                    translated_batch = translator.translate(messages)
+                    if translated_batch:
+                        break
+                except Exception as e:
+                    logger.warning(f"Batch {i} failed (retry {retry}): {e}")
+                    time.sleep(1)
+            
+            if not translated_batch:
+                full_translation.extend([""] * len(batch))
+                continue
+                
+            # Split back using precisely the same separator logic
+            parts = translated_batch.split("[SEP]")
+            parts = [p.strip().replace('[', '').replace(']', '').strip() for p in parts]
+            
+            # Filter out empty strings that might occur due to extra newlines
+            parts = [p for p in parts if p or len(batch) == 1]
+            
+            if len(parts) != len(batch):
+                logger.warning(f"Batch {i} mismatch: In={len(batch)}, Out={len(parts)}. Falling back to one-by-one.")
+                for sub_text in batch:
+                    sub_trans = ""
+                    for r in range(2):
+                        try:
+                            sub_trans = translator.translate([{'role': 'user', 'content': sub_text}])
+                            if sub_trans: break
+                        except: time.sleep(0.3)
+                    full_translation.append(sub_trans)
+            else:
+                full_translation.extend(parts)
+        
+        return [translation_postprocess(t) for t in full_translation]
+
+    # LLM / Sequential Translation
     fixed_message = [
         {'role': 'system', 'content': f'You are a language expert. Task: Translate video transcript into {target_language}. Model after: "{summary["title"]}".'}
     ]

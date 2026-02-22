@@ -16,17 +16,29 @@ def sanitize_filename(filename: str) -> str:
     return sanitized_filename
 
 
-def save_wav(wav: np.ndarray, output_path: str, sample_rate=24000):
+def save_wav(wav: np.ndarray, output_path: str, sample_rate=44100):
+    # Support stereo: transpose from (channels, samples) to (samples, channels)
+    if wav.ndim > 1 and wav.shape[0] <= 2: # Likely (channels, samples)
+        wav = wav.T
     # wav_norm = wav * (32767 / max(0.01, np.max(np.abs(wav))))
     wav_norm = wav * 32767
     wavfile.write(output_path, sample_rate, wav_norm.astype(np.int16))
 
-def save_wav_norm(wav: np.ndarray, output_path: str, sample_rate=24000):
+def save_wav_norm(wav: np.ndarray, output_path: str, sample_rate=44100):
+    if wav.size == 0:
+        logger.warning(f"Cố gắng lưu file audio trống: {output_path}. Bỏ qua.")
+        return
+    # Support stereo: transpose from (channels, samples) to (samples, channels)
+    if wav.ndim > 1 and wav.shape[0] <= 2: # Likely (channels, samples)
+        wav = wav.T
     wav_norm = wav * (32767 / max(0.01, np.max(np.abs(wav))))
     wavfile.write(output_path, sample_rate, wav_norm.astype(np.int16))
     
 def normalize_wav(wav_path: str) -> None:
     sample_rate, wav = wavfile.read(wav_path)
+    if wav.size == 0:
+        logger.warning(f"File audio trống: {wav_path}. Bỏ qua chuẩn hóa.")
+        return
     wav_norm = wav * (32767 / max(0.01, np.max(np.abs(wav))))
     wavfile.write(wav_path, sample_rate, wav_norm.astype(np.int16))
 

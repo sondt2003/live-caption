@@ -122,7 +122,7 @@ class VoiceMapper:
         self.speaker_cache[speaker_id] = voice
         return voice
 
-def adjust_audio_length(wav_path, desired_length, sample_rate=24000, min_speed_factor=0.5, max_speed_factor=1.35):
+def adjust_audio_length(wav_path, desired_length, sample_rate=44100, min_speed_factor=0.01, max_speed_factor=10.0):
     try:
         # Load directly to numpy for manipulation
         wav_orig, _ = librosa.load(wav_path, sr=sample_rate)
@@ -161,7 +161,7 @@ def adjust_audio_length(wav_path, desired_length, sample_rate=24000, min_speed_f
     actual_duration = len(wav_final) / sample_rate
     return wav_final, actual_duration
 
-def get_gender_from_audio(wav_path, start, end):
+def get_gender_from_audio(wav_path, start, end, audio_data=None, sr=16000):
     """
     Detect gender based on average pitch (F0).
     Male: < 165Hz
@@ -172,7 +172,13 @@ def get_gender_from_audio(wav_path, start, end):
         duration = end - start
         if duration < 0.5: return None # Too short to decide
         
-        y, sr = librosa.load(wav_path, sr=16000, offset=start, duration=duration)
+        if audio_data is not None:
+            # Optimization: Use pre-loaded audio data slice
+            start_sample = int(start * sr)
+            end_sample = int(end * sr)
+            y = audio_data[start_sample:end_sample]
+        else:
+            y, sr = librosa.load(wav_path, sr=sr, offset=start, duration=duration)
         
         # Estimate pitch using PYIN
         f0, voiced_flag, voiced_probs = librosa.pyin(y, fmin=50, fmax=300, sr=sr)
@@ -218,6 +224,13 @@ def generate_all_wavs_under_folder(folder, method='auto', target_language='vi', 
             logger.info("Single speaker detected (Diarization OFF). Skipping gender check and defaulting to MALE voice.")
             force_male_voice = True
         
+        # Pre-load vocals for faster pitch analysis
+        vocals_path = os.path.join(folder, 'audio_vocals.wav')
+        audio_vocals = None
+        sr_vocals = 44100
+        if os.path.exists(vocals_path):
+            audio_vocals, _ = librosa.load(vocals_path, sr=sr_vocals)
+
         for line in transcript:
             spk = line['speaker']
             
@@ -231,7 +244,7 @@ def generate_all_wavs_under_folder(folder, method='auto', target_language='vi', 
             
             # Collect pitch samples (max 5 samples per speaker to save time)
             if len(speaker_pitches[spk]) < 5:
-                pitch = get_gender_from_audio(os.path.join(folder, 'audio_vocals.wav'), line.get('start'), line.get('end'))
+                pitch = get_gender_from_audio(vocals_path, line.get('start'), line.get('end'), audio_data=audio_vocals, sr=sr_vocals)
                 if pitch:
                     speaker_pitches[spk].append(pitch)
         
@@ -280,7 +293,11 @@ def generate_all_wavs_under_folder(folder, method='auto', target_language='vi', 
         # Consistent Voice Selection based on Speaker ID
         task_voice = voice_mapper.get_voice(speaker, text)
         
-        if hasattr(engine, 'language_map') and 'vi' in target_language and "EdgeTTS" in str(type(engine)):
+        # Optimization/Fix: Only override with gender-based voice if no specific voice was requested by the user
+        # or if the user explicitly requested 'auto' or 'vi-VN-HoaiMyNeural' (default)
+        is_default_voice = (voice is None or voice == 'auto' or voice == 'vi-VN-HoaiMyNeural')
+        
+        if is_default_voice and hasattr(engine, 'language_map') and 'vi' in target_language and "EdgeTTS" in str(type(engine)):
             # Stable Mode: Use pre-calculated gender for the speaker
             gender = speaker_gender_map.get(speaker, 'female')
 
@@ -308,31 +325,22 @@ def generate_all_wavs_under_folder(folder, method='auto', target_language='vi', 
             engine.generate(task.pop("text"), task.pop("output_path"), **task)
 
     full_wav = np.zeros((0, ))
+    TARGET_SR = 44100
     for i, line in enumerate(transcript):
         # Backup original timings (STABLE REFERENCE)
-        # Chỉ backup nếu chưa có (tránh việc lặp lại làm hỏng timings gốc)
         if 'original_start' not in line:
             line['original_start'] = line.get('start', 0.0)
         if 'original_end' not in line:
             line['original_end'] = line.get('end', 0.0)
         
         output_path = os.path.join(output_folder, f'{str(i).zfill(4)}.wav')
-        last_end = len(full_wav)/24000
+        last_end = len(full_wav)/TARGET_SR
         
     # Timeline Pacing Logic
     current_out_end = 0.0
     
-    # Đọc cấu hình từ .env
-    from dotenv import load_dotenv
-    load_dotenv()
-    
     # Khoảng lặng tối thiểu giữa các câu (giây).
-    # Tăng lên để giọng đọc tự nhiên hơn, giảm xuống để video nhanh hơn.
     MIN_GAP = float(os.getenv('MIN_GAP', 0))
-    
-    # Giới hạn hệ số giãn nở video tối đa.
-    # 1.0 nghĩa là video không được phép chậm lại (ép buộc đồng bộ 1:1).
-    # Nếu âm thanh dài hơn, nó sẽ bị tua nhanh để khớp với video gốc.
     MAX_PTS_FACTOR = float(os.getenv('MAX_PTS_FACTOR', 1.0))
     
     for i, line in enumerate(transcript):
@@ -342,20 +350,19 @@ def generate_all_wavs_under_folder(folder, method='auto', target_language='vi', 
         orig_dur = orig_end - orig_start
         
         # 1. Determine the earliest possible start time
-        # We try to start at the original time, but must follow previous output
         target_start = max(orig_start, current_out_end + MIN_GAP)
         
         # 2. Add silence to reach the target start in the main wav
         if target_start > current_out_end:
-            full_wav = np.concatenate((full_wav, np.zeros((int((target_start - current_out_end) * 24000), ))))
+            full_wav = np.concatenate((full_wav, np.zeros((int((target_start - current_out_end) * TARGET_SR), ))))
         
-        current_start = len(full_wav)/24000
+        current_start = len(full_wav)/TARGET_SR
         line['start'] = current_start
         
         if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
             # Load raw duration for calculation
-            raw_vox, _ = librosa.load(output_path, sr=24000)
-            raw_dur = len(raw_vox) / 24000
+            raw_vox, _ = librosa.load(output_path, sr=TARGET_SR)
+            raw_dur = len(raw_vox) / TARGET_SR
             
             # PHYSICAL VIDEO LIMIT: 1.0x (Original duration).
             # Thus, audio SHOULD NOT be longer than orig_dur.
@@ -373,7 +380,8 @@ def generate_all_wavs_under_folder(folder, method='auto', target_language='vi', 
             # 3. Decision: Use ideal if it doesn't require extreme compression, else use hard limit
             needed_ratio_to_ideal = ideal_dur / raw_dur if raw_dur > 0 else 1.0
             
-            if needed_ratio_to_ideal >= 0.6: # If < 1.6x speedup is enough to catch up
+            # TIGHTENED SYNC: Increase threshold to catch up more aggressively.
+            if needed_ratio_to_ideal >= 0.5: # Allow up to 2x speedup for sync
                 stretch_to = ideal_dur
                 logger.debug(f"Segment {i}: Catch-up target (Ideal: {ideal_dur:.2f}s)")
             else:
@@ -381,15 +389,16 @@ def generate_all_wavs_under_folder(folder, method='auto', target_language='vi', 
                 stretch_to = hard_limit_dur
                 logger.debug(f"Segment {i}: Video-limit target (Max: {hard_limit_dur:.2f}s)")
 
-            # We allow compression up to 4x (0.25) to fit these strict limits
-            local_min_speed_factor = 0.25
+            # We allow compression up to 6.6x (0.15) to fit these strict limits
+            # This is necessary for short videos where sentences are long.
+            local_min_speed_factor = 0.15
             
             wav, adjusted_len = adjust_audio_length(output_path, stretch_to, min_speed_factor=local_min_speed_factor)
             line['source_duration'] = orig_dur
         else:
             logger.warning(f"Segment {i}: Output path {output_path} not found. Filling with silence.")
             line['source_duration'] = orig_dur
-            wav = np.zeros((int(orig_dur * 24000), ))
+            wav = np.zeros((int(orig_dur * TARGET_SR), ))
             adjusted_len = orig_dur
 
         full_wav = np.concatenate((full_wav, wav))
@@ -404,7 +413,7 @@ def generate_all_wavs_under_folder(folder, method='auto', target_language='vi', 
     # Xử lý âm thanh hậu kỳ (Mastering)
     logger.info("Đang xử lý âm thanh hậu kỳ (Studio-Grade Mastering)...")
     try:
-        meter = pyln.Meter(24000)
+        meter = pyln.Meter(44100)
         loudness = meter.integrated_loudness(full_wav)
         if np.isinf(loudness):
             logger.warning("Độ lớn âm thanh không xác định (-inf), bỏ qua chuẩn hóa.")
@@ -415,27 +424,25 @@ def generate_all_wavs_under_folder(folder, method='auto', target_language='vi', 
 
     # ĐỒNG BỘ ĐỘ DÀI: Đảm bảo âm thanh dài bằng video (bao gồm cả đoạn 'tail')
     try:
-        # Tìm metadata video để lấy thời lượng gốc
-        # Chúng ta giả định audio_instruments.wav hoặc audio_vocals.wav có thời lượng bằng video gốc
-        orig_audio_path = os.path.join(folder, 'audio_instruments.wav')
-        if not os.path.exists(orig_audio_path):
-            orig_audio_path = os.path.join(folder, 'audio_vocals.wav')
+        # Optimization: Use pre-loaded audio data to get duration if possible
+        orig_total_dur = 0
+        if 'audio_vocals' in locals() and audio_vocals is not None:
+            orig_total_dur = len(audio_vocals) / sr_vocals
+        elif os.path.exists(instr_path):
+            orig_total_dur = librosa.get_duration(path=instr_path)
             
-        if os.path.exists(orig_audio_path):
-            orig_total_dur = librosa.get_duration(path=orig_audio_path)
-            # Theo logic video.py: final_v_dur = last_target_end + (orig_total_dur - last_orig_end)
-            if transcript:
-                last_line = transcript[-1]
-                last_orig_end = last_line['original_end']
-                last_target_end = last_line['end']
-                
-                final_v_dur = last_target_end + max(0, orig_total_dur - last_orig_end)
-                current_audio_dur = len(full_wav) / 24000
-                
-                if final_v_dur > current_audio_dur:
-                    padding_len = int((final_v_dur - current_audio_dur) * 24000)
-                    full_wav = np.concatenate([full_wav, np.zeros(padding_len)])
-                    logger.info(f"Đã thêm {final_v_dur - current_audio_dur:.2f}s khoảng lặng vào cuối để khớp với video.")
+        if orig_total_dur > 0 and transcript:
+            last_line = transcript[-1]
+            last_orig_end = last_line['original_end']
+            last_target_end = last_line['end']
+            
+            final_v_dur = last_target_end + max(0, orig_total_dur - last_orig_end)
+            current_audio_dur = full_wav.shape[-1] / 44100
+            
+            if final_v_dur > current_audio_dur:
+                padding_len = int((final_v_dur - current_audio_dur) * 44100)
+                full_wav = np.concatenate([full_wav, np.zeros(padding_len)])
+                logger.info(f"Đã thêm {final_v_dur - current_audio_dur:.2f}s khoảng lặng vào cuối để khớp với video.")
 
     except Exception as e:
         logger.warning(f"Không thể đồng bộ độ dài audio với video: {e}")
@@ -450,20 +457,48 @@ def generate_all_wavs_under_folder(folder, method='auto', target_language='vi', 
         logger.warning(f"Không thể dọn dẹp thư mục tệp tạm TTS: {e}")
     
     # Trộn với nhạc nền/âm thanh gốc nếu có
+    # Optimization: Use pre-loaded audio_vocals if available, or load instr once
     instr_path = os.path.join(folder, 'audio_instruments.wav')
+    target_sr = 44100
+    
     if os.path.exists(instr_path):
-        instr, _ = librosa.load(instr_path, sr=24000)
+        # Load as stereo if available
+        instr, _ = librosa.load(instr_path, sr=target_sr, mono=False)
         
         # ĐỒNG BỘ ĐỘ DÀI: Đảm bảo nhạc nền dài bằng âm thanh TTS (padding silence nếu cần)
+        if instr.ndim > 1:
+            # Stereo handling
+            if instr.shape[1] < len(full_wav):
+                padding = np.zeros((2, len(full_wav) - instr.shape[1]))
+                instr = np.concatenate([instr, padding], axis=1)
+            
+            # Expand full_wav (mono) to stereo
+            full_wav_stereo = np.tile(full_wav, (2, 1))
+            combined = full_wav_stereo + instr[:, :len(full_wav)] * video_volume
+        else:
+            # Mono fallback
+            if len(instr) < len(full_wav):
+                padding = np.zeros(len(full_wav) - len(instr))
+                instr = np.concatenate([instr, padding])
+            combined = full_wav + instr[:len(full_wav)] * video_volume
+            
+        save_wav_norm(combined, os.path.join(folder, 'audio_combined.wav'), sample_rate=target_sr)
+    elif audio_vocals is not None:
+        # Use pre-loaded vocals if instruments not found (fallback)
+        # Resample to target_sr
+        if sr_vocals != target_sr:
+            instr = librosa.resample(audio_vocals, orig_sr=sr_vocals, target_sr=target_sr)
+        else:
+            instr = audio_vocals
+            
         if len(instr) < len(full_wav):
             padding = np.zeros(len(full_wav) - len(instr))
             instr = np.concatenate([instr, padding])
-        
-        # Áp dụng video_volume cho nhạc nền, full_wav là giọng nói (giữ nguyên độ lớn)
         combined = full_wav + instr[:len(full_wav)] * video_volume
-        save_wav_norm(combined, os.path.join(folder, 'audio_combined.wav'))
+        save_wav_norm(combined, os.path.join(folder, 'audio_combined.wav'), sample_rate=target_sr)
     else:
-        shutil.copy(os.path.join(folder, 'audio_tts.wav'), os.path.join(folder, 'audio_combined.wav'))
+        # Just save the mono TTS at 44.1k
+        save_wav_norm(full_wav, os.path.join(folder, 'audio_combined.wav'), sample_rate=target_sr)
 
     return f'Xử lý xong thư mục {folder}', os.path.join(folder, 'audio_combined.wav'), None
 

@@ -53,7 +53,8 @@ def process_video(video_file, root_folder,
                   translation_method, translation_target_language,
                   tts_method, tts_target_language, voice,
                   subtitles, speed_up, fps, background_music, bgm_volume, video_volume,
-                  target_resolution, max_retries, progress_callback=None, tracker=None, audio_only=False, language=None):
+                  target_resolution, max_retries, progress_callback=None, tracker=None, audio_only=False, language=None,
+                  asr_method='google', google_key=None):
     """
     Quy trình xử lý hoàn chỉnh cho một video duy nhất với hỗ trợ callback tiến độ.
 
@@ -113,7 +114,7 @@ def process_video(video_file, root_folder,
             
             if not os.path.exists(folder):
                 os.makedirs(folder)
-            
+            mục
             logger.info(f'Đang xử lý video từ nguồn: {video_file} (Thư mục làm việc: {folder})')
 
             # Cập nhật tiến độ sau khi chuẩn bị xong file
@@ -158,10 +159,11 @@ def process_video(video_file, root_folder,
             try:
                 status, result_json = transcribe_all_audio_under_folder(
                     folder, whisper_model_name=whisper_model, device=device,
-                    batch_size=batch_size, diarization=diarization,
+                    batch_size=batch_size, diarization=diarization, 
                     min_speakers=whisper_min_speakers,
                     max_speakers=whisper_max_speakers,
-                    language=language)
+                    language=language, 
+                    asr_method=asr_method, google_key=google_key)
                 logger.info(f'Nhận diện giọng nói hoàn tất: {status}')
                 
                 if tracker: tracker.end_stage("ASR")
@@ -274,7 +276,8 @@ def engine_run(root_folder='outputs', url=None, video_file=None, num_videos=1,
                   tts_method='auto', tts_target_language='简体中文', voice=None,
                   subtitles=False, speed_up=1.00, fps=30,
                   background_music=None, bgm_volume=0.5, video_volume=1.0, target_resolution='1080p',
-                  max_retries=5, progress_callback=None, audio_only=False, language=None):
+                  max_retries=5, progress_callback=None, audio_only=False, language=None,
+                  asr_method='google', google_key=None):
     """
     Hàm chạy chính toàn bộ quy trình xử lý video.
 
@@ -320,7 +323,8 @@ def engine_run(root_folder='outputs', url=None, video_file=None, num_videos=1,
                 translation_method, translation_target_language,
                 tts_method, tts_target_language, voice,
                 subtitles, speed_up, fps, background_music, bgm_volume, video_volume,
-                target_resolution, max_retries, progress_callback, tracker, audio_only=audio_only, language=language
+                target_resolution, max_retries, progress_callback, tracker, audio_only=audio_only, language=language,
+                asr_method=asr_method, google_key=google_key
             )
 
             if success:

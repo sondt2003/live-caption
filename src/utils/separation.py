@@ -80,15 +80,21 @@ def separate_audio(folder: str, model_name: str = "UVR-MDX-NET-Inst_HQ_3.onnx", 
 
 def release_model():
     """
-    Giải phóng tài nguyên MDX Separator
+    Giải phóng tài nguyên MDX Separator để tiết kiệm VRAM cho bước tiếp theo (ASR)
     """
     global mdx_separator
     if mdx_separator is not None:
         logger.info('Đang giải phóng tài nguyên MDX Separator...')
+        # Xóa reference để GC có thể thu hồi
         mdx_separator = None
+        
+        # Cường hóa việc dọn dẹp bộ nhớ
+        import gc
         gc.collect()
+        
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+            logger.info('Đã xóa cache CUDA của Separator.')
 
 def extract_audio_from_video(folder: str, video_path: str = None) -> bool:
     """

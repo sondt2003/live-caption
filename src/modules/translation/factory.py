@@ -1,4 +1,3 @@
-from .providers.openai import OpenAITranslator
 from .providers.ollama import OllamaTranslator
 from .providers.qwen import QwenTranslator
 from .providers.ernie import ErnieTranslator
@@ -10,9 +9,7 @@ class TranslatorFactory:
     def get_translator(method, target_language='vi'):
         method_lower = method.lower()
         
-        if 'openai' in method_lower:
-            return OpenAITranslator()
-        elif 'ollama' in method_lower:
+        if 'ollama' in method_lower:
             return OllamaTranslator()
         elif 'qwen' in method_lower or '通义千问' in method:
             return QwenTranslator()

@@ -18,6 +18,12 @@ def main():
     parser.add_argument("--separator_model", type=str, default="UVR-MDX-NET-Inst_HQ_3.onnx", help="Separation model (MDX-Net ONNX, e.g. UVR-MDX-NET-Inst_HQ_3.onnx)")
     parser.add_argument("--audio_only", action="store_true", help="Only generate audio, skip video synthesis")
     parser.add_argument("--language", type=str, default=None, help="ASR language code (e.g., 'en', 'vi'). Skips auto-detection if provided.")
+    parser.add_argument("--whisper_model", type=str, default="small", help="WhisperX model name.")
+    parser.add_argument("--batch_size", type=int, default=8, help="Batch size for ASR.")
+    parser.add_argument("--diarization",default=False, action="store_true", help="Enable speaker diarization.")
+    parser.add_argument("--target_resolution", type=str, default="original", help="Output video resolution.")
+    parser.add_argument("--asr_method", type=str, default="google", choices=["whisperx", "google"], help="ASR method to use.")
+    parser.add_argument("--google_api_key", type=str, default="AIzaSyBOti4mM-6x9WDnZIjIeyEU21OpBXqWBgw", help="Google Speech API v2 key.")
     args = parser.parse_args()
 
     # Test video path
@@ -28,7 +34,7 @@ def main():
         shutil.rmtree(output_dir)
     os.makedirs(output_dir, exist_ok=True)
 
-    print(f"Starting Studio-Grade Pipeline Test (TTS: {args.tts_method}, ASR: WhisperX)...")
+    print(f"Starting Studio-Grade Pipeline (TTS: {args.tts_method}, ASR: {args.asr_method}, Model: {args.whisper_model})...")
     msg, output_video = engine_run(
         root_folder=output_dir,          # Thư mục gốc lưu trữ kết quả (outputs/studio_grade)
         url=None,                         # URL video (YouTube/Bilibili), set None nếu dùng file video cục bộ
@@ -44,22 +50,24 @@ def main():
         voice=args.voice,
         
         # Model WhisperX: 'tiny', 'base', 'small', 'medium', 'large-v1', 'large-v2', 'large-v3'
-        whisper_model='small',            
-        batch_size=8,                     # Kích thước batch cho ASR (tăng nếu có nhiều VRAM)
-        diarization=False,                 # True: Phân biệt người nói, False: Không phân biệt
+        whisper_model=args.whisper_model,            
+        batch_size=args.batch_size,                     # Kích thước batch cho ASR (tăng nếu có nhiều VRAM)
+        diarization=args.diarization,                 # True: Phân biệt người nói, False: Không phân biệt
         
         # Model tách nhạc/vocal: MDX-Net ONNX
         separator_model=args.separator_model,       
         
         # Độ phân giải đầu ra: 'original' (giữ nguyên), '720p', '1080p'
-        target_resolution='original',
+        target_resolution=args.target_resolution,
         
         # Âm lượng: 1.0 là mặc định, giảm xuống để bớt dính tiếng gốc (vocal leakage)
         video_volume=args.video_volume,
         
         # Tùy chọn chỉ xuất âm thanh
         audio_only=args.audio_only,
-        language=args.language
+        language=args.language,
+        asr_method=args.asr_method,
+        google_key=args.google_api_key
     )
 
     print(f"Test Status: {msg}")

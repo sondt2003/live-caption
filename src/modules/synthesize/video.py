@@ -264,7 +264,12 @@ def synthesize_video(folder, subtitles=True, speed_up=1.00, fps=30, resolution='
     # --- Common Post-Processing Filters (Watermark, etc.) ---
     # These apply if we didn't return early from fast merge.
     
-    input_args = ['-i', input_video, '-i', input_audio]
+    input_args = [
+        '-analyzeduration', '100M', 
+        '-probesize', '100M',
+        '-i', input_video, 
+        '-i', input_audio
+    ]
     
     # 3. Watermark
     if watermark_path and os.path.exists(watermark_path):
@@ -283,6 +288,9 @@ def synthesize_video(folder, subtitles=True, speed_up=1.00, fps=30, resolution='
         '-s', resolution_str,
         '-c:v', 'libx264',
         '-c:a', 'aac',
+        '-b:a', '192k',
+        '-ac', '2',
+        '-ar', '44100',
         '-preset', 'veryfast',
         final_video,
         '-y',
@@ -313,6 +321,9 @@ def synthesize_video(folder, subtitles=True, speed_up=1.00, fps=30, resolution='
             '-s', resolution_str,
             '-c:v', 'libx264',
             '-c:a', 'aac',
+            '-b:a', '192k',
+            '-ac', '2',
+            '-ar', '44100',
             '-preset', 'veryfast',
             final_video,
             '-y',
@@ -328,10 +339,15 @@ def run_fast_merge(input_video, input_audio, output_video):
     """Thực hiện ghép video/audio bằng Stream Copy (không encode lại)."""
     ffmpeg_command = [
         'ffmpeg',
+        '-analyzeduration', '100M',
+        '-probesize', '100M',
         '-i', input_video,
         '-i', input_audio,
         '-c:v', 'copy',
         '-c:a', 'aac',
+        '-b:a', '192k',
+        '-ac', '2',
+        '-ar', '44100',
         '-map', '0:v:0',
         '-map', '1:a:0',
         '-shortest',
