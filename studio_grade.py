@@ -56,8 +56,8 @@ def main():
         # Model tách nhạc/vocal: MDX-Net ONNX
         separator_model=args.separator_model,       
         
-        # Độ phân giải đầu ra: '720p', '1080p', '4k', '2k'
-        target_resolution='1080p',
+        # Độ phân giải đầu ra: 'original' (giữ nguyên), '720p', '1080p'
+        target_resolution='original',
         
         # Âm lượng: 1.0 là mặc định, giảm xuống để bớt dính tiếng gốc (vocal leakage)
         video_volume=args.video_volume,

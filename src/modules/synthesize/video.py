@@ -98,14 +98,31 @@ def get_video_info(video_path):
     }
 
 
-def convert_resolution(aspect_ratio, resolution='1080p'):
+def convert_resolution(aspect_ratio, resolution='1080p', orig_w=None, orig_h=None):
     """Chuyển đổi độ phân giải mục tiêu dựa trên tỷ lệ khung hình."""
-    if aspect_ratio < 1:
-        width = int(resolution[:-1])
-        height = int(width / aspect_ratio)
-    else:
-        height = int(resolution[:-1])
-        width = int(height * aspect_ratio)
+    if resolution is None or str(resolution).lower() in ['original', 'source', 'none']:
+        if orig_w and orig_h:
+            return orig_w, orig_h
+        return 1920, 1080 # Fallback 1080p if orig not provided
+
+    try:
+        if isinstance(resolution, str) and resolution.endswith('p'):
+            base_h = int(resolution[:-1])
+        else:
+            base_h = int(resolution)
+            
+        if aspect_ratio < 1:
+            # Vertical/Portrait
+            width = base_h
+            height = int(width / aspect_ratio)
+        else:
+            # Horizontal/Landscape
+            height = base_h
+            width = int(height * aspect_ratio)
+    except Exception as e:
+        logger.warning(f"Resolution parse error: {e}. Fallback to 1080p.")
+        return 1920, 1080
+
     # Đảm bảo chiều rộng và chiều cao chia hết cho 2
     width = width - width % 2
     height = height - height % 2
@@ -141,7 +158,7 @@ def synthesize_video(folder, subtitles=True, speed_up=1.00, fps=30, resolution='
     aspect_ratio = orig_w / orig_h
     
     # Độ phân giải đích
-    target_w, target_h = convert_resolution(aspect_ratio, resolution)
+    target_w, target_h = convert_resolution(aspect_ratio, resolution, orig_w, orig_h)
     resolution_str = f'{target_w}x{target_h}'
     
     # Lấy thông số đồng bộ từ .env
