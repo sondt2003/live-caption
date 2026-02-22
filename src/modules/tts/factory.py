@@ -17,15 +17,6 @@ class TTSFactory:
             if 'edge' in method_lower:
                 from .providers.edge import EdgeTTSProvider
                 TTSFactory._instances[method_lower] = EdgeTTSProvider()
-            elif 'xtts' in method_lower:
-                from .providers.xtts import XTTSProvider
-                TTSFactory._instances[method_lower] = XTTSProvider()
-            elif 'vieneu' in method_lower:
-                from .providers.vieneu import VieNeuProvider
-                TTSFactory._instances[method_lower] = VieNeuProvider()
-            elif 'elevenlabs' in method_lower or 'ai33' in method_lower:
-                from .providers.elevenlabs import ElevenLabsProvider
-                TTSFactory._instances[method_lower] = ElevenLabsProvider()
             elif 'minimax' in method_lower:
                 from .providers.minimax import MinimaxProvider
                 TTSFactory._instances[method_lower] = MinimaxProvider()
@@ -41,18 +32,9 @@ class TTSFactory:
     def get_best_tts_engine(language: str):
         """
         Automatically selects the best TTS engine based on language.
-        Prioritizes XTTS for its supported languages.
+        Defaults to EdgeTTS for all languages now.
         """
-        lang_lower = language.lower()
-        if lang_lower == 'zh': lang_lower = 'zh-cn'
-        
-        if lang_lower == 'vi':
-            logger.info(f"Auto-selected VieNeu-TTS for language: {language}")
-            return TTSFactory.get_tts_engine('vieneu')
-        elif lang_lower in TTSFactory.XTTS_LANGS:
-            logger.info(f"Auto-selected XTTS for language: {language}")
-            return TTSFactory.get_tts_engine('xtts')
-        else:
-            logger.info(f"Auto-selected EdgeTTS for language: {language}")
-            return TTSFactory.get_tts_engine('edge')
+        # Simplification: Always use EdgeTTS as default free provider
+        logger.info(f"Auto-selected EdgeTTS for language: {language}")
+        return TTSFactory.get_tts_engine('edge')
 

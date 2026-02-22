@@ -4,7 +4,6 @@ import torch
 import numpy as np
 from dotenv import load_dotenv
 from .whisperx import whisperx_transcribe_audio
-from .funasr import funasr_transcribe_audio
 from utils.utils import save_wav
 import json
 import librosa
@@ -63,7 +62,7 @@ def generate_speaker_audio(folder, transcript):
         save_wav(audio, speaker_file_path)
 
 
-def transcribe_audio(method, folder, model_name: str = 'large', download_root='models/ASR/whisper', device='auto', batch_size=32, diarization=True,min_speakers=None, max_speakers=None, language=None):
+def transcribe_audio(folder, model_name: str = 'large', download_root='models/ASR/whisper', device='auto', batch_size=32, diarization=True,min_speakers=None, max_speakers=None, language=None):
     wav_path = os.path.join(folder, 'audio_vocals.wav')
     
     if not os.path.exists(wav_path):
@@ -74,13 +73,8 @@ def transcribe_audio(method, folder, model_name: str = 'large', download_root='m
     if device == 'auto':
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
-    if method == 'WhisperX':
-        transcript = whisperx_transcribe_audio(wav_path, model_name, download_root, device, batch_size, diarization, min_speakers, max_speakers, language=language)
-    elif method == 'FunASR':
-        transcript = funasr_transcribe_audio(wav_path, device, batch_size, diarization)
-    else:
-        logger.error('Invalid ASR method')
-        raise ValueError('Invalid ASR method')
+    # Only WhisperX is supported now
+    transcript = whisperx_transcribe_audio(wav_path, model_name, download_root, device, batch_size, diarization, min_speakers, max_speakers, language=language)
 
     transcript = merge_segments(transcript)
     with open(os.path.join(folder, 'transcript.json'), 'w', encoding='utf-8') as f:
@@ -89,11 +83,11 @@ def transcribe_audio(method, folder, model_name: str = 'large', download_root='m
     generate_speaker_audio(folder, transcript)
     return transcript
 
-def transcribe_all_audio_under_folder(folder, asr_method, whisper_model_name: str = 'large', device='auto', batch_size=32, diarization=False, min_speakers=None, max_speakers=None, language=None):
+def transcribe_all_audio_under_folder(folder, whisper_model_name: str = 'large', device='auto', batch_size=32, diarization=False, min_speakers=None, max_speakers=None, language=None):
     transcribe_json = None
     for root, dirs, files in os.walk(folder):
         if 'audio_vocals.wav' in files and 'transcript.json' not in files:
-            transcribe_json = transcribe_audio(asr_method, root, whisper_model_name, 'models/ASR/whisper', device, batch_size, diarization, min_speakers, max_speakers, language=language)
+            transcribe_json = transcribe_audio(root, whisper_model_name, 'models/ASR/whisper', device, batch_size, diarization, min_speakers, max_speakers, language=language)
         elif 'transcript.json' in files:
             transcribe_json = json.load(open(os.path.join(root, 'transcript.json'), 'r', encoding='utf-8'))
 

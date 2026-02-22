@@ -331,9 +331,9 @@ def generate_all_wavs_under_folder(folder, method='auto', target_language='vi', 
     MIN_GAP = float(os.getenv('MIN_GAP', 0))
     
     # Giới hạn hệ số giãn nở video tối đa.
-    # 1.43 nghĩa là video chỉ được phép chậm lại tối đa 43%.
-    # Nếu quá giới hạn này, âm thanh sẽ bị tua nhanh thay vì video chậm thêm.
-    MAX_PTS_FACTOR = float(os.getenv('MAX_PTS_FACTOR', 1.43))
+    # 1.0 nghĩa là video không được phép chậm lại (ép buộc đồng bộ 1:1).
+    # Nếu âm thanh dài hơn, nó sẽ bị tua nhanh để khớp với video gốc.
+    MAX_PTS_FACTOR = float(os.getenv('MAX_PTS_FACTOR', 1.0))
     
     for i, line in enumerate(transcript):
         output_path = os.path.join(output_folder, f'{str(i).zfill(4)}.wav')
@@ -357,8 +357,8 @@ def generate_all_wavs_under_folder(folder, method='auto', target_language='vi', 
             raw_vox, _ = librosa.load(output_path, sr=24000)
             raw_dur = len(raw_vox) / 24000
             
-            # PHYSICAL VIDEO LIMIT: A video segment cannot stretch more than 1.43x.
-            # Thus, audio SHOULD NOT be longer than orig_dur * 1.43.
+            # PHYSICAL VIDEO LIMIT: 1.0x (Original duration).
+            # Thus, audio SHOULD NOT be longer than orig_dur.
             max_seg_allowed = orig_dur * MAX_PTS_FACTOR
             
             # ABSOLUTE DEADLINE: Audio must finish before this point to keep entire video in sync.
@@ -377,7 +377,7 @@ def generate_all_wavs_under_folder(folder, method='auto', target_language='vi', 
                 stretch_to = ideal_dur
                 logger.debug(f"Segment {i}: Catch-up target (Ideal: {ideal_dur:.2f}s)")
             else:
-                # Catching up is too hard, at least try to stay within the 1.43x video limit
+                # Catching up is too hard, at least try to stay within the 1.0x video limit
                 stretch_to = hard_limit_dur
                 logger.debug(f"Segment {i}: Video-limit target (Max: {hard_limit_dur:.2f}s)")
 

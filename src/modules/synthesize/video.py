@@ -164,23 +164,27 @@ def synthesize_video(folder, subtitles=True, speed_up=1.00, fps=30, resolution='
     # Lấy thông số đồng bộ từ .env
     from dotenv import load_dotenv
     load_dotenv()
-    MAX_PTS_FACTOR = float(os.getenv('MAX_PTS_FACTOR', 1.43))
+    MAX_PTS_FACTOR = float(os.getenv('MAX_PTS_FACTOR', 1.0))
     
     # Điều kiện tiên quyết cho Stream Copy (Siêu tốc):
     # Không watermark, không đổi phân giải, không đổi fps, không BGM, không phụ đề hardcode
-    base_fast_conditions = (not watermark_path and 
+    has_watermark = watermark_path is not None and os.path.exists(watermark_path)
+    base_fast_conditions = (not has_watermark and 
                             speed_up == 1.0 and 
                             orig_w == target_w and 
                             orig_h == target_h and 
                             abs(video_info['fps'] - fps) < 0.1 and
                             not background_music)
     
+    logger.debug(f"Stream Copy Conditions: Watermark={has_watermark}, Speed={speed_up}, Resolution=({orig_w}x{orig_h} vs {target_w}x{target_h}), FPS=({video_info['fps']:.2f} vs {fps}), BGM={bool(background_music)}")
+    logger.debug(f"MAX_PTS_FACTOR={MAX_PTS_FACTOR:.2f}, base_fast_conditions={base_fast_conditions}")
+
     # Kiểm tra metadata đồng bộ thích ứng
     is_adaptive = all(k in translation[0] for k in ['original_start', 'original_end']) if translation else False
     
     # ƯU TIÊN: Nếu người dùng muốn giữ nguyên 1:1 (MAX_PTS_FACTOR=1.0) và đủ điều kiện copy
     if MAX_PTS_FACTOR == 1.0 and base_fast_conditions:
-        logger.info("MAX_PTS_FACTOR=1.0 phát hiện. Sử dụng Stream Copy siêu tốc...")
+        logger.info("MAX_PTS_FACTOR=1.0 phát hiện. Sử dụng Stream Copy siêu tốc (Zero Re-encode)...")
         return run_fast_merge(input_video, input_audio, final_video)
 
     # TRƯỜNG HỢP 1: Đồng bộ thích ứng (từng câu)

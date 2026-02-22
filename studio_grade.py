@@ -11,12 +11,10 @@ import argparse
 
 def main():
     parser = argparse.ArgumentParser(description="Studio-Grade Pipeline Test")
-    parser.add_argument("--tts_method", type=str, default="edge", help="TTS method (auto, edge, xtts, azure, openai, elevenlabs, minimax). 'auto' uses XTTS for supported languages, EdgeTTS otherwise.")
+    parser.add_argument("--tts_method", type=str, default="edge", help="TTS method (auto, edge, minimax). 'auto' uses EdgeTTS by default.")
     parser.add_argument("--voice", type=str, default=None, help="Voice name or speaker_wav path for XTTS cloning.")
-    parser.add_argument("--asr_method", type=str, default="WhisperX", choices=['WhisperX', 'FunASR'], help="ASR method")
-    parser.add_argument("--video_volume", type=float, default=0.5, help="Background music volume")
-    parser.add_argument("--shifts", type=int, default=0, help="Deprecated: used to be for Demucs shifts, now unused.")
     parser.add_argument("--video_file", type=str, required=True, help="Path to input video file")
+    parser.add_argument("--video_volume", type=float, default=0.5, help="Video vocal volume (0.0 - 1.0)")
     parser.add_argument("--separator_model", type=str, default="UVR-MDX-NET-Inst_HQ_3.onnx", help="Separation model (MDX-Net ONNX, e.g. UVR-MDX-NET-Inst_HQ_3.onnx)")
     parser.add_argument("--audio_only", action="store_true", help="Only generate audio, skip video synthesis")
     parser.add_argument("--language", type=str, default=None, help="ASR language code (e.g., 'en', 'vi'). Skips auto-detection if provided.")
@@ -30,7 +28,7 @@ def main():
         shutil.rmtree(output_dir)
     os.makedirs(output_dir, exist_ok=True)
 
-    print(f"Starting Studio-Grade Pipeline Test (TTS: {args.tts_method}, ASR: {args.asr_method})...")
+    print(f"Starting Studio-Grade Pipeline Test (TTS: {args.tts_method}, ASR: WhisperX)...")
     msg, output_video = engine_run(
         root_folder=output_dir,          # Thư mục gốc lưu trữ kết quả (outputs/studio_grade)
         url=None,                         # URL video (YouTube/Bilibili), set None nếu dùng file video cục bộ
@@ -40,14 +38,11 @@ def main():
         translation_method='Google Translate', 
         translation_target_language='vi', # Ngôn ngữ đích cho dịch thuật (ISO code: vi, en, zh-cn, ja, ko...)
         
-        # Phương pháp TTS: 'edge', 'gtts', 'azure', 'openai'
+        # Phương pháp TTS: 'edge', 'minimax'
         tts_target_language='vi',         # Ngôn ngữ đích cho TTS
         tts_method=args.tts_method,
         voice=args.voice,
-        shifts=args.shifts,
         
-        # Phương pháp ASR (Nhận diện giọng nói): 'WhisperX', 'FunASR'
-        asr_method=args.asr_method,            
         # Model WhisperX: 'tiny', 'base', 'small', 'medium', 'large-v1', 'large-v2', 'large-v3'
         whisper_model='small',            
         batch_size=8,                     # Kích thước batch cho ASR (tăng nếu có nhiều VRAM)

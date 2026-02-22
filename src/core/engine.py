@@ -8,7 +8,6 @@ from loguru import logger
 from utils.separation import separate_all_audio_under_folder, release_model
 from modules.asr.manager import transcribe_all_audio_under_folder
 from modules.asr.whisperx import init_whisperx, init_diarize, release_whisperx
-from modules.asr.funasr import init_funasr
 from modules.translation.manager import translate_all_transcript_under_folder
 from modules.tts.manager import generate_all_wavs_under_folder, init_TTS
 from modules.synthesize.video import synthesize_all_video_under_folder
@@ -19,7 +18,6 @@ models_initialized = {
     'separator': False,
     'whisperx': False,
     'diarize': False,
-    'funasr': False
 }
 
 
@@ -35,7 +33,7 @@ def get_available_gpu_memory():
         return 0  # Trả về 0 nếu có lỗi
 
 
-def initialize_models(tts_method, asr_method, diarization):
+def initialize_models(tts_method, diarization):
     """
     Khởi tạo các mô hình cần thiết.
     Chỉ khởi tạo mô hình trong lần gọi đầu tiên để tránh tải lại.
@@ -49,9 +47,9 @@ def initialize_models(tts_method, asr_method, diarization):
     logger.info("Optimization: Skipping eager model loading. Models will be loaded on demand.")
     return
 
-def process_video(video_file, root_folder, resolution,
+def process_video(video_file, root_folder,
                   separator_model, device, shifts,
-                  asr_method, whisper_model, batch_size, diarization, whisper_min_speakers, whisper_max_speakers,
+                  whisper_model, batch_size, diarization, whisper_min_speakers, whisper_max_speakers,
                   translation_method, translation_target_language,
                   tts_method, tts_target_language, voice,
                   subtitles, speed_up, fps, background_music, bgm_volume, video_volume,
@@ -159,7 +157,7 @@ def process_video(video_file, root_folder, resolution,
 
             try:
                 status, result_json = transcribe_all_audio_under_folder(
-                    folder, asr_method=asr_method, whisper_model_name=whisper_model, device=device,
+                    folder, whisper_model_name=whisper_model, device=device,
                     batch_size=batch_size, diarization=diarization,
                     min_speakers=whisper_min_speakers,
                     max_speakers=whisper_max_speakers,
@@ -268,15 +266,15 @@ def process_video(video_file, root_folder, resolution,
     return False, None, f"Đã đạt số lần thử lại tối đa: {max_retries}"
 
 
-def engine_run(root_folder='outputs', url=None, video_file=None, num_videos=1, resolution='1080p',
+def engine_run(root_folder='outputs', url=None, video_file=None, num_videos=1,
                   separator_model='UVR-MDX-NET-Inst_HQ_3.onnx', device='auto', shifts=1,
-                  asr_method='WhisperX', whisper_model='large', batch_size=32, diarization=False,
+                  whisper_model='large', batch_size=32, diarization=False,
                   whisper_min_speakers=None, whisper_max_speakers=None,
                   translation_method='LLM', translation_target_language='简体中文',
                   tts_method='auto', tts_target_language='简体中文', voice=None,
                   subtitles=False, speed_up=1.00, fps=30,
                   background_music=None, bgm_volume=0.5, video_volume=1.0, target_resolution='1080p',
-                  max_workers=3, max_retries=5, progress_callback=None, audio_only=False, language=None):
+                  max_retries=5, progress_callback=None, audio_only=False, language=None):
     """
     Hàm chạy chính toàn bộ quy trình xử lý video.
 
@@ -291,9 +289,9 @@ def engine_run(root_folder='outputs', url=None, video_file=None, num_videos=1, r
         # Ghi nhật ký bắt đầu nhiệm vụ và tất cả các thông số
         logger.info("-" * 50)
         logger.info(f"Bắt đầu nhiệm vụ xử lý: {video_file if video_file else url}")
-        logger.info(f"Thông số: Thư mục gốc={root_folder}, Độ phân giải={resolution}")
+        logger.info(f"Thông số: Thư mục gốc={root_folder}")
         logger.info(f"Tách tiếng (MDX-Net): Mô hình={separator_model}, Thiết bị={device}")
-        logger.info(f"Nhận diện: Phương pháp={asr_method}, Mô hình={whisper_model}, Batch Size={batch_size}")
+        logger.info(f"Nhận diện: Mô hình={whisper_model}, Batch Size={batch_size}")
         logger.info(f"Dịch thuật: Phương pháp={translation_method}, Ngôn ngữ mục tiêu={translation_target_language}")
         logger.info(f"TTS: Phương pháp={tts_method}, Ngôn ngữ={tts_target_language}, Giọng={voice}")
         logger.info(f"Tổng hợp: Phụ đề={subtitles}, Tăng tốc={speed_up}, FPS={fps}, Phân giải đầu ra={target_resolution}")
@@ -307,7 +305,7 @@ def engine_run(root_folder='outputs', url=None, video_file=None, num_videos=1, r
             
             tracker = PerformanceTracker()
             tracker.start_stage("Model Initialization")
-            initialize_models(tts_method, asr_method, diarization)
+            initialize_models(tts_method, diarization)
             tracker.end_stage("Model Initialization")
         except Exception as e:
             stack_trace = traceback.format_exc()
@@ -316,9 +314,9 @@ def engine_run(root_folder='outputs', url=None, video_file=None, num_videos=1, r
 
         if video_file:
             success, output_video, error_msg = process_video(
-                video_file, root_folder, resolution,
+                video_file, root_folder,
                 separator_model, device, shifts,
-                asr_method, whisper_model, batch_size, diarization, whisper_min_speakers, whisper_max_speakers,
+                whisper_model, batch_size, diarization, whisper_min_speakers, whisper_max_speakers,
                 translation_method, translation_target_language,
                 tts_method, tts_target_language, voice,
                 subtitles, speed_up, fps, background_music, bgm_volume, video_volume,
