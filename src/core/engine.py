@@ -114,7 +114,7 @@ def process_video(video_file, root_folder,
             
             if not os.path.exists(folder):
                 os.makedirs(folder)
-            mục
+            
             logger.info(f'Đang xử lý video từ nguồn: {video_file} (Thư mục làm việc: {folder})')
 
             # Cập nhật tiến độ sau khi chuẩn bị xong file
